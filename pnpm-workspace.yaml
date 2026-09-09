@@ -1,0 +1,5 @@
+# Packages permitted to run install scripts. Deny-by-default: anything not named here
+# may not run preinstall/postinstall. Kept empty deliberately — no direct dependency
+# declares an install hook. Playwright's browsers are fetched by an explicit
+# `pnpm browser`, never by a lifecycle script.
+allowBuilds: []

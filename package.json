@@ -1,0 +1,21 @@
+{
+  "name": "wp-journeys",
+  "version": "0.1.0",
+  "description": "Plugin-agnostic end-to-end user-journey runner for WordPress.",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "wpj": "./bin/wpj.js" },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm typecheck && pnpm test",
+    "browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}
