@@ -49,6 +49,7 @@ $WPH wp "$SITE" -- config set WPJ_AGENT true --raw
 # wp-cli echoes the value it writes; keep the secret out of the terminal and any CI log.
 $WPH wp "$SITE" -- config set WPJ_AGENT_SECRET "$SECRET" > /dev/null
 echo "WPJ_AGENT_SECRET set (value in $ENV_FILE)"
-# Plain permalinks leave /wp-json/ unrouted (it serves the home page); the agent route needs pretty ones.
+# Pretty permalinks, as most real sites run. The runner does not need them (it addresses the agent
+# by ?rest_route=, which works on plain permalinks too); this only lets hand-run curl checks use /wp-json/.
 $WPH wp "$SITE" -- rewrite structure '/%postname%/'
 echo "https://$SITE.wp.test ready"
