@@ -31,7 +31,7 @@ function wpj_discover() {
     } finally {
         wp_set_current_user($previous_user);
     }
-    global $menu, $submenu, $shortcode_tags, $wp_roles;
+    global $menu, $submenu, $shortcode_tags, $wp_roles, $_parent_pages;
 
     $blocks = array();
     if (class_exists('WP_Block_Type_Registry')) {
@@ -57,6 +57,7 @@ function wpj_discover() {
         'shortcodes' => array_keys(is_array($shortcode_tags) ? $shortcode_tags : array()),
         'routes' => wpj_discover_routes(rest_get_server()->get_routes()),
         'roles' => $roles,
+        'pluginPages' => wpj_discover_plugin_pages(is_array($_parent_pages) ? $_parent_pages : array(), 'wpj_serves_by_page'),
     );
 }
 
@@ -64,13 +65,26 @@ function wpj_discover() {
  * Build the admin menu the way wp-admin does: core's own screens (wp-admin/menu.php), then
  * `_admin_menu` and `admin_menu` for every plugin, then core's privilege pruning.
  *
- * menu.php is written for global scope. Included from here, its variables would be this
- * function's locals, so every global it or a plugin's add_*_page() call reads is bound first.
+ * wp-admin/menu.php and wp-admin/includes/menu.php are written for global scope. Required from
+ * here, every variable they assign would be this function's local, and any core function that
+ * reads it through `global` would see null. So every file-scope variable of those two files
+ * that core anywhere declares `global` is bound first. The list comes from a token-level audit
+ * of WP 7.1:
+ *   - menu registries: $menu $submenu $compat $admin_page_hooks $_wp_real_parent_file
+ *     $_wp_submenu_nopriv $_wp_menu_nopriv $_wp_last_object_menu $_wp_last_utility_menu
+ *   - custom ordering: $menu_order $default_menu_order, read by sort_menu(). Unbound, every
+ *     plugin that enables `custom_menu_order` (WooCommerce, menu editors) had its order
+ *     silently dropped and a PHP warning written to debug.log, which was then blamed on it.
+ *   - loop temporaries that share a name with a core global: $id $post_type $taxonomy
+ *     (bound so the build behaves exactly as it does at global scope in wp-admin)
+ * $_registered_pages and $_parent_pages are not assigned there, but add_*_page() writes them.
  */
 function wpj_build_admin_menu() {
     global $menu, $submenu, $compat, $admin_page_hooks, $_registered_pages, $_parent_pages,
         $_wp_real_parent_file, $_wp_submenu_nopriv, $_wp_menu_nopriv,
-        $_wp_last_object_menu, $_wp_last_utility_menu;
+        $_wp_last_object_menu, $_wp_last_utility_menu,
+        $menu_order, $default_menu_order,
+        $id, $post_type, $taxonomy;
 
     require_once ABSPATH . 'wp-admin/includes/admin.php';
     if (!did_action('admin_menu')) {
@@ -91,6 +105,47 @@ function wpj_discover_submenu(array $submenu) {
         $lists[$parent] = array_values((array) $rows);
     }
     return $lists;
+}
+
+/**
+ * WordPress's plugin-page registry, as the list of slugs it serves by `?page=`.
+ *
+ * `$_parent_pages` (slug => parent, or false at top level) is the registry add_menu_page() and
+ * add_submenu_page() write and menu_page_url() keys on. But core writes callback-less screens
+ * into it too: theme-editor.php and plugin-editor.php under Tools, and every custom post type
+ * list screen (`edit.php?post_type=x`) that `show_in_menu` hangs under a plugin menu. Those are
+ * served at their own path, so each entry is kept only if `$serves_by_page` says WordPress
+ * itself would link it by `?page=`.
+ *
+ * @param array    $parent_pages   slug => parent slug, or false for a top-level page
+ * @param callable $serves_by_page function (string $slug, string $parent): bool; a top-level
+ *                                 page is asked with parent 'admin.php', as menu-header.php does
+ * @return string[] slugs, in registry order
+ */
+function wpj_discover_plugin_pages(array $parent_pages, $serves_by_page) {
+    $pages = array();
+    foreach ($parent_pages as $slug => $parent) {
+        $slug = (string) $slug;
+        if (call_user_func($serves_by_page, $slug, $parent === false ? 'admin.php' : (string) $parent)) {
+            $pages[] = $slug;
+        }
+    }
+    return $pages;
+}
+
+/**
+ * WordPress's own test, from wp-admin/menu-header.php, for "link this item by ?page=": a page
+ * hook is registered for it, or it names a plugin file that is not a wp-admin file.
+ */
+function wpj_serves_by_page($slug, $parent) {
+    if (get_plugin_page_hook($slug, $parent)) {
+        return true;
+    }
+    $parts = explode('?', $slug, 2);
+    $file = $parts[0];
+    return $slug !== 'index.php'
+        && file_exists(WP_PLUGIN_DIR . '/' . $file)
+        && !file_exists(ABSPATH . 'wp-admin/' . $file);
 }
 
 /**

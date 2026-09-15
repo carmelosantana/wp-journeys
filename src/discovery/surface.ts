@@ -22,25 +22,28 @@ function readRow(row: unknown[]): { title: string; capability: string; slug: str
   return { title, capability, slug };
 }
 
-/** Whether a menu slug names a wp-admin file (`edit.php`, `edit.php?post_type=acme`). */
-function isAdminFile(slug: string): boolean {
+/** Whether a menu slug names a `.php` file (`options-general.php`, `edit.php?post_type=x`). */
+function isPhpFile(slug: string): boolean {
   return (slug.split('?')[0] ?? slug).endsWith('.php');
 }
 
 /**
- * Where WordPress actually serves a screen:
- * - a slug that is itself a `.php` file is reachable at its own path, query string and all;
- * - a plugin page under a CORE parent (`add_options_page()`, a CPT's `edit.php?post_type=x`)
- *   gets the URL WordPress's own menu links it at: the parent file with `?page=`, or `&page=`
- *   when the parent already has a query. (On WP 7.1, `admin.php?page=` also resolves such a
- *   page, via `get_admin_page_parent()`, but the parent-file URL is the canonical one.)
- * - any other plugin page hangs off `admin.php?page=`.
- * Getting this wrong sends screens to a 403/404 — caught ONLY because `classifyNavigation`
- * (Task 9) treats a non-2xx main document as a defect.
+ * Where WordPress serves a screen. "Is this a plugin page?" is decided by WordPress's own
+ * registry (`pluginPages`), never by a `.php` suffix: a plugin page registered with `__FILE__`
+ * as its slug is `myplugin/myplugin.php`, which ends in `.php` yet is served by `?page=`.
+ * - A top-level plugin page is `/wp-admin/admin.php?page=<slug>`. Any other top-level slug is
+ *   a core screen at its own path, query string and all (`edit.php?post_type=x`).
+ * - A submenu plugin page whose parent is a core file (a `.php` parent that is not itself a
+ *   plugin page) is `/wp-admin/<parent>?page=<slug>`, or `&page=` when the parent carries a
+ *   query: the URL WordPress's own menu links it at. Under any other parent it is
+ *   `/wp-admin/admin.php?page=<slug>`.
+ * - A submenu slug that is not a plugin page is a core screen at its own path.
+ * A wrong URL here sends a screen to a 404, caught ONLY because `classifyNavigation` (Task 9)
+ * treats a non-2xx main document as a defect.
  */
-function urlFor(slug: string, parent: string | null): string {
-  if (isAdminFile(slug)) return `/wp-admin/${slug}`;
-  if (parent !== null && isAdminFile(parent)) {
+function urlFor(slug: string, parent: string | null, pluginPages: ReadonlySet<string>): string {
+  if (!pluginPages.has(slug)) return `/wp-admin/${slug}`;
+  if (parent !== null && !pluginPages.has(parent) && isPhpFile(parent)) {
     return `/wp-admin/${parent}${parent.includes('?') ? '&' : '?'}page=${slug}`;
   }
   return `/wp-admin/admin.php?page=${slug}`;
@@ -48,17 +51,18 @@ function urlFor(slug: string, parent: string | null): string {
 
 export function projectSurface(raw: RawRegistries): Surface {
   const screens: AdminScreen[] = [];
+  const pluginPages = new Set(raw.pluginPages);
 
   for (const row of raw.menu) {
     const parsed = readRow(row);
     if (!parsed) continue;
-    screens.push({ ...parsed, url: urlFor(parsed.slug, null), parent: null });
+    screens.push({ ...parsed, url: urlFor(parsed.slug, null, pluginPages), parent: null });
     for (const child of raw.submenu[parsed.slug] ?? []) {
       const sub = readRow(child);
       // add_submenu_page() mirrors the parent into its own submenu as a link back to itself:
       // the same screen again, so projecting it would double every plugin's top-level page.
       if (!sub || sub.slug === parsed.slug) continue;
-      screens.push({ ...sub, url: urlFor(sub.slug, parsed.slug), parent: parsed.slug });
+      screens.push({ ...sub, url: urlFor(sub.slug, parsed.slug, pluginPages), parent: parsed.slug });
     }
   }
 

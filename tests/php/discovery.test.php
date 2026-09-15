@@ -76,4 +76,34 @@ wpj_assert(
     )))
 );
 
+// WordPress's plugin-page registry, $_parent_pages: slug => parent slug, or false at top level.
+// Core also writes callback-less screens into it (theme-editor.php, CPT list screens), which
+// the predicate (WordPress's own menu-header test) must be able to leave out.
+$parent_pages = array(
+    'wpj-plugin/wpj-plugin.php' => false,
+    'wpj-plugin-child' => 'wpj-plugin/wpj-plugin.php',
+    'theme-editor.php' => 'tools.php',
+    'edit.php?post_type=acme_item' => 'acme',
+);
+$asked = array();
+$serves_by_page = function ($slug, $parent) use (&$asked) {
+    $asked[] = array($slug, $parent);
+    return in_array($slug, array('wpj-plugin/wpj-plugin.php', 'wpj-plugin-child'), true);
+};
+wpj_assert(
+    'lists only the registered pages WordPress would serve by ?page=, in registry order',
+    array('wpj-plugin/wpj-plugin.php', 'wpj-plugin-child'),
+    wpj_discover_plugin_pages($parent_pages, $serves_by_page)
+);
+wpj_assert(
+    'asks with parent admin.php for a top-level page, as wp-admin/menu-header.php does',
+    array('wpj-plugin/wpj-plugin.php', 'admin.php'),
+    $asked[0]
+);
+wpj_assert(
+    'asks with the registered parent for a submenu page',
+    array('wpj-plugin-child', 'wpj-plugin/wpj-plugin.php'),
+    $asked[1]
+);
+
 wpj_assert_exit();

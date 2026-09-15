@@ -19,6 +19,8 @@ const raw: RawRegistries = {
     '/acme/v1/open': { methods: ['GET'], guarded: false },
   },
   roles: { administrator: ['manage_options', 'read'], subscriber: ['read'] },
+  // WordPress's plugin-page registry ($_parent_pages): which slugs are served by ?page=.
+  pluginPages: ['acme', 'acme-settings'],
 };
 
 describe('projectSurface', () => {
@@ -83,6 +85,7 @@ describe('projectSurface', () => {
     // add_options_page() pages are linked by WordPress's own menu at options-general.php?page=.
     const surface = projectSurface({
       ...raw,
+      pluginPages: ['acme-options'],
       menu: [['Settings', 'manage_options', 'options-general.php']],
       submenu: {
         'options-general.php': [
@@ -105,6 +108,7 @@ describe('projectSurface', () => {
       ...raw,
       menu: [['Acme Items', 'edit_posts', 'edit.php?post_type=acme']],
       submenu: { 'edit.php?post_type=acme': [['Report', 'edit_posts', 'acme-report']] },
+      pluginPages: ['acme-report'],
     });
 
     expect(surface.screens.map((s) => s.url)).toEqual([
@@ -118,6 +122,53 @@ describe('projectSurface', () => {
     expect(surface.screens.find((s) => s.slug === 'acme-settings')?.url).toBe(
       '/wp-admin/admin.php?page=acme-settings',
     );
+  });
+
+  describe('decides "plugin page?" by WordPress\'s registry, not by a .php suffix', () => {
+    // A __FILE__ slug: add_menu_page() runs plugin_basename() on it, so it ends in .php yet is
+    // a plugin page. Only pluginPages ($_parent_pages) can tell it from a core screen.
+    const registry: RawRegistries = {
+      ...raw,
+      menu: [
+        ['File Plugin', 'manage_options', 'myplugin/myplugin.php'],
+        ['Acme', 'manage_options', 'acme'],
+        ['Settings', 'manage_options', 'options-general.php'],
+        ['Acme Items', 'edit_posts', 'edit.php?post_type=acme'],
+      ],
+      submenu: {
+        'myplugin/myplugin.php': [['Child', 'manage_options', 'myplugin-child']],
+        acme: [
+          ['Reports', 'manage_options', 'acme/reports.php'],
+          ['Items', 'edit_posts', 'edit.php?post_type=acme_item'],
+        ],
+        'options-general.php': [
+          ['Acme Options', 'manage_options', 'acme/options.php'],
+          ['Writing', 'manage_options', 'options-writing.php'],
+        ],
+      },
+      pluginPages: ['myplugin/myplugin.php', 'myplugin-child', 'acme', 'acme/reports.php', 'acme/options.php'],
+    };
+    const urlOf = (slug: string) => projectSurface(registry).screens.find((s) => s.slug === slug)?.url;
+
+    it('a __FILE__-style top-level plugin page goes to admin.php?page=', () => {
+      expect(urlOf('myplugin/myplugin.php')).toBe('/wp-admin/admin.php?page=myplugin/myplugin.php');
+    });
+    it('a child of a __FILE__-style plugin page goes to admin.php?page=', () => {
+      expect(urlOf('myplugin-child')).toBe('/wp-admin/admin.php?page=myplugin-child');
+    });
+    it('a plugin page under a plugin top-level goes to admin.php?page=, even with a .php slug', () => {
+      expect(urlOf('acme/reports.php')).toBe('/wp-admin/admin.php?page=acme/reports.php');
+    });
+    it('a plugin page under a core parent goes under the parent file, even with a .php slug', () => {
+      expect(urlOf('acme/options.php')).toBe('/wp-admin/options-general.php?page=acme/options.php');
+    });
+    it('a core submenu is its own path, even under a plugin top-level', () => {
+      expect(urlOf('options-writing.php')).toBe('/wp-admin/options-writing.php');
+      expect(urlOf('edit.php?post_type=acme_item')).toBe('/wp-admin/edit.php?post_type=acme_item');
+    });
+    it('a core screen with a query is its own path', () => {
+      expect(urlOf('edit.php?post_type=acme')).toBe('/wp-admin/edit.php?post_type=acme');
+    });
   });
 
   it('skips menu separators, which are not screens', () => {
@@ -136,7 +187,7 @@ describe('projectSurface', () => {
 
   it('tolerates a registry the host shipped empty rather than throwing', () => {
     const surface = projectSurface({
-      menu: [], submenu: {}, blocks: [], shortcodes: [], routes: {}, roles: {},
+      menu: [], submenu: {}, blocks: [], shortcodes: [], routes: {}, roles: {}, pluginPages: [],
     });
     expect(surface.screens).toEqual([]);
     expect(surface.blocks).toEqual([]);
@@ -151,6 +202,7 @@ describe('surfaceDelta', () => {
       blocks: ['core/paragraph'],
       shortcodes: ['gallery'],
       routes: { '/wp/v2/posts': { methods: ['GET'], guarded: false } },
+      pluginPages: [],
       roles: { administrator: ['manage_options', 'read'], subscriber: ['read'] },
     });
     const after = projectSurface(raw);

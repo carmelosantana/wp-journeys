@@ -35,4 +35,10 @@ export interface RawRegistries {
   shortcodes: string[];
   routes: Record<string, { methods: string[]; guarded: boolean }>;
   roles: Record<string, string[]>;
+  /**
+   * WordPress's plugin-page registry: the `$_parent_pages` slugs WordPress serves by `?page=`
+   * (the ones its own menu links that way). Decides "plugin page or core screen?" — a `.php`
+   * suffix cannot, since a page registered with `__FILE__` is `myplugin/myplugin.php`.
+   */
+  pluginPages: string[];
 }
