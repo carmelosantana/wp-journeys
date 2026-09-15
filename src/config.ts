@@ -16,7 +16,9 @@ function isLocalHost(hostname: string): boolean {
   return (
     hostname === 'localhost' ||
     hostname === '127.0.0.1' ||
-    hostname.endsWith('.wp.test') ||
+    // URL keeps the brackets on an IPv6 host, so this is the shape `[::1]` arrives in.
+    hostname === '[::1]' ||
+    // `.test` already covers the harness's own `.wp.test` suffix.
     hostname.endsWith('.test') ||
     hostname.endsWith('.localhost')
   );
