@@ -121,6 +121,14 @@ describe('createAgentClient', () => {
     expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({ action: 'logDelta', args: { offset: 382 } });
   });
 
+  it('asks for a size-only baseline with offset "end"', async () => {
+    const baseline = { offset: 545, lines: [], available: true };
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, baseline));
+
+    expect(await client.logDelta('end')).toEqual(baseline);
+    expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({ action: 'logDelta', args: { offset: 'end' } });
+  });
+
   it('passes a lost log signal through as lost, never as an empty clean delta', async () => {
     const lost = { offset: 0, lines: [], available: false, reason: 'WP_DEBUG_LOG is off' };
     const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, lost));

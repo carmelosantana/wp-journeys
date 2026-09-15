@@ -18,7 +18,11 @@ export interface AgentStatus {
   debugLog: boolean;
 }
 
-/** Bytes written to debug.log since a prior offset. `available: false` means the signal is LOST, not clean. */
+/**
+ * Complete debug.log lines written since a prior offset. `available: false` means the signal
+ * is LOST, not clean: its `offset` only echoes the one sent, so after a lost read the runner
+ * must re-baseline with `logDelta('end')` rather than feed that offset back.
+ */
 export interface LogDelta {
   offset: number;
   lines: string[];
@@ -31,7 +35,8 @@ export interface AgentClient {
   status(): Promise<AgentStatus>;
   discover(): Promise<RawRegistries>;
   snapshot(): Promise<Snapshot>;
-  logDelta(offset: number): Promise<LogDelta>;
+  /** The delta since `offset`, or with `'end'` a size-only baseline that returns no lines. */
+  logDelta(offset: number | 'end'): Promise<LogDelta>;
 }
 
 /** The agent refused to serve (its guard said no). Distinct from a transport failure. */
@@ -118,6 +123,6 @@ export function createAgentClient(
     status: () => call<AgentStatus>('status'),
     discover: () => post<RawRegistries>(discoverEndpoint, {}, 'discover'),
     snapshot: () => call<Snapshot>('snapshot'),
-    logDelta: (offset: number) => call<LogDelta>('logDelta', { offset }),
+    logDelta: (offset: number | 'end') => call<LogDelta>('logDelta', { offset }),
   };
 }
