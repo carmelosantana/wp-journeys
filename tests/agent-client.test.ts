@@ -103,6 +103,15 @@ describe('createAgentClient', () => {
     );
   });
 
+  it('snapshots through the REST route and returns the names untouched', async () => {
+    const snapshot = { options: ['siteurl'], tables: ['wp_options'], cron: ['wp_version_check'], userMeta: ['nickname'] };
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, snapshot));
+
+    expect(await client.snapshot()).toEqual(snapshot);
+    expect(fakeFetch.lastUrl).toBe('https://wpjtest.wp.test/?rest_route=%2Fwp-journeys%2Fv1%2Fagent');
+    expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({ action: 'snapshot', args: {} });
+  });
+
   it('turns the agent refusal into a named error rather than a generic HTTP failure', async () => {
     const f = fakeFetch(403, { code: 'wpj_refused', message: 'WP_DEBUG is off' });
     const client = createAgentClient('https://wpjtest.wp.test', 's3cret', f);

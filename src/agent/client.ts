@@ -7,6 +7,7 @@
  * actions, and admin-post.php for discovery, which must run where `is_admin()` is true.
  */
 
+import type { Snapshot } from '../discovery/snapshot.ts';
 import type { RawRegistries } from '../discovery/types.ts';
 
 /** What the agent reports about the site it is running in. */
@@ -21,6 +22,7 @@ export interface AgentStatus {
 export interface AgentClient {
   status(): Promise<AgentStatus>;
   discover(): Promise<RawRegistries>;
+  snapshot(): Promise<Snapshot>;
 }
 
 /** The agent refused to serve (its guard said no). Distinct from a transport failure. */
@@ -106,5 +108,6 @@ export function createAgentClient(
   return {
     status: () => call<AgentStatus>('status'),
     discover: () => post<RawRegistries>(discoverEndpoint, {}, 'discover'),
+    snapshot: () => call<Snapshot>('snapshot'),
   };
 }

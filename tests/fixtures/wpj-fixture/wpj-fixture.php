@@ -6,10 +6,38 @@
  * License: MIT
  *
  * PHP 7.4-compatible syntax on purpose, like the agent.
+ *
+ * Activation-time state, separate from the surface above. On activation it creates exactly:
+ * option wpj_fixture_version, table {$wpdb->prefix}wpj_fixture_log, the daily cron event
+ * wpj_fixture_daily, and user meta wpj_fixture_seen on the first administrator. uninstall.php
+ * removes all of it EXCEPT the cron event. That omission is an INTENTIONAL LEAK, so the
+ * uninstall-orphan detector always has one known positive to catch (and the three it does
+ * remove are its known negatives). Do not "fix" it.
  */
 
 if (!defined('ABSPATH')) {
     exit;
+}
+
+register_activation_hook(__FILE__, 'wpj_fixture_activate');
+
+/** Create the activation-time state documented in the header: one of each kind. */
+function wpj_fixture_activate() {
+    global $wpdb;
+
+    update_option('wpj_fixture_version', '0.1.0');
+
+    $table = $wpdb->prefix . 'wpj_fixture_log';
+    $wpdb->query("CREATE TABLE IF NOT EXISTS {$table} (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, PRIMARY KEY (id)) " . $wpdb->get_charset_collate());
+
+    if (!wp_next_scheduled('wpj_fixture_daily')) {
+        wp_schedule_event(time(), 'daily', 'wpj_fixture_daily');
+    }
+
+    $admins = get_users(array('role' => 'administrator', 'orderby' => 'ID', 'order' => 'ASC', 'number' => 1, 'fields' => 'ID'));
+    if ($admins) {
+        update_user_meta((int) $admins[0], 'wpj_fixture_seen', '1');
+    }
 }
 
 add_action('admin_menu', 'wpj_fixture_admin_menu');
