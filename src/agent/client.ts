@@ -6,6 +6,8 @@
  * seam to secure and exactly one code path whether or not wp-cli is available.
  */
 
+import type { RawRegistries } from '../discovery/types.ts';
+
 /** What the agent reports about the site it is running in. */
 export interface AgentStatus {
   ok: true;
@@ -17,6 +19,7 @@ export interface AgentStatus {
 /** The agent's callable surface. Later tasks widen this interface. */
 export interface AgentClient {
   status(): Promise<AgentStatus>;
+  discover(): Promise<RawRegistries>;
 }
 
 /** The agent refused to serve (its guard said no). Distinct from a transport failure. */
@@ -78,5 +81,6 @@ export function createAgentClient(
 
   return {
     status: () => call<AgentStatus>('status'),
+    discover: () => call<RawRegistries>('discover'),
   };
 }

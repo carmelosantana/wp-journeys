@@ -8,6 +8,7 @@
  */
 
 require_once __DIR__ . '/src/guard.php';
+require_once __DIR__ . '/src/discovery.php';
 
 /** Read the live environment into the shape wpj_guard_verdict() expects. */
 function wpj_agent_env() {
@@ -46,6 +47,8 @@ function wpj_agent_dispatch($request) {
                 'php' => PHP_VERSION,
                 'debugLog' => defined('WP_DEBUG_LOG') && WP_DEBUG_LOG,
             );
+        case 'discover':
+            return wpj_discover();
     }
     return new WP_Error('wpj_unknown_action', sprintf('unknown action "%s"', $action), array('status' => 400));
 }

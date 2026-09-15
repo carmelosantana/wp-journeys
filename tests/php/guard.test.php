@@ -1,13 +1,6 @@
 <?php
+require __DIR__ . '/assert.php';
 require __DIR__ . '/../../mu-plugin/src/guard.php';
-
-$fails = 0;
-function wpj_assert($label, $expected, $actual) {
-    global $fails;
-    if ($expected === $actual) { echo "ok   $label\n"; return; }
-    $fails++;
-    echo "FAIL $label\n  expected: " . var_export($expected, true) . "\n  actual:   " . var_export($actual, true) . "\n";
-}
 
 $ok = array('enabled' => true, 'environment_type' => 'local', 'wp_debug' => true, 'has_secret' => true);
 
@@ -74,4 +67,4 @@ wpj_assert(
     wpj_guard_verdict(array_merge($ok, array('wp_debug' => 1)))
 );
 
-exit($fails === 0 ? 0 : 1);
+wpj_assert_exit();
