@@ -9,7 +9,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm typecheck && pnpm test",
+    "test:php": "php tests/php/guard.test.php",
+    "check": "pnpm typecheck && pnpm test && pnpm test:php",
     "browser": "playwright install chromium"
   },
   "devDependencies": {
