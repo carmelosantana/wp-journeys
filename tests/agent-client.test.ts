@@ -129,6 +129,19 @@ describe('createAgentClient', () => {
     expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({ action: 'logDelta', args: { offset: 'end' } });
   });
 
+  it('refuses an offset that is neither "end" nor a non-negative integer, before any request', async () => {
+    // JSON turns NaN and Infinity into null, and PHP clamps a negative to 0: either way the
+    // whole log would come back as one delta.
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, { offset: 0, lines: [], available: true }));
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5]) {
+      fakeFetch.lastUrl = '';
+      await expect(client.logDelta(bad), String(bad)).rejects.toThrow(
+        `logDelta offset must be 'end' or a non-negative integer, got ${String(bad)}`,
+      );
+      expect(fakeFetch.lastUrl, String(bad)).toBe('');
+    }
+  });
+
   it('passes a lost log signal through as lost, never as an empty clean delta', async () => {
     const lost = { offset: 0, lines: [], available: false, reason: 'WP_DEBUG_LOG is off' };
     const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, lost));

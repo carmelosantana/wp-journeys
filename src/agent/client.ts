@@ -123,6 +123,13 @@ export function createAgentClient(
     status: () => call<AgentStatus>('status'),
     discover: () => post<RawRegistries>(discoverEndpoint, {}, 'discover'),
     snapshot: () => call<Snapshot>('snapshot'),
-    logDelta: (offset: number | 'end') => call<LogDelta>('logDelta', { offset }),
+    logDelta: async (offset: number | 'end') => {
+      // JSON sends NaN and Infinity as null and PHP clamps a negative to 0: either would read
+      // the whole log as one delta, so refuse before the request.
+      if (offset !== 'end' && !(Number.isInteger(offset) && offset >= 0)) {
+        throw new RangeError(`logDelta offset must be 'end' or a non-negative integer, got ${String(offset)}`);
+      }
+      return call<LogDelta>('logDelta', { offset });
+    },
   };
 }
