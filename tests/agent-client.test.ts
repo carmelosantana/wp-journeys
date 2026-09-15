@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createAgentClient } from '../src/agent/client.ts';
+import { AgentBadResponseError, AgentRefusedError, createAgentClient } from '../src/agent/client.ts';
 
 function fakeRawFetch(status: number, text: string, contentType: string): typeof fetch {
   return (async (url: string | URL | Request, init?: RequestInit) => {
@@ -64,13 +64,43 @@ describe('createAgentClient', () => {
     );
   });
 
-  it('asks the agent to discover and returns the raw registries untouched', async () => {
+  it('discovers through admin-post.php, where is_admin() is true, and returns the registries untouched', async () => {
     const registries = { menu: [], submenu: {}, blocks: ['core/paragraph'], shortcodes: [], routes: {}, roles: {} };
     const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, registries));
 
     expect(await client.discover()).toEqual(registries);
-    expect(fakeFetch.lastUrl).toBe('https://wpjtest.wp.test/?rest_route=%2Fwp-journeys%2Fv1%2Fagent');
-    expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({ action: 'discover', args: {} });
+    expect(fakeFetch.lastUrl).toBe('https://wpjtest.wp.test/wp-admin/admin-post.php?action=wpj_discover');
+    expect(fakeFetch.lastInit?.method).toBe('POST');
+    const headers = fakeFetch.lastInit?.headers as Record<string, string>;
+    expect(headers['X-WPJ-Secret']).toBe('s3cret');
+  });
+
+  it('keeps the path of a subdirectory install for discovery, with or without a trailing slash', async () => {
+    for (const base of ['https://example.test/sub', 'https://example.test/sub/']) {
+      await createAgentClient(base, 's3cret', fakeFetch(200, {})).discover();
+      expect(fakeFetch.lastUrl).toBe('https://example.test/sub/wp-admin/admin-post.php?action=wpj_discover');
+    }
+  });
+
+  it('raises the named refusal error when discovery is refused', async () => {
+    const refusal = { code: 'wpj_refused', message: 'shared secret mismatch', data: { status: 403 } };
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(403, refusal));
+
+    const error = await client.discover().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AgentRefusedError);
+    expect((error as Error).message).toBe('wp-journeys agent refused the request: shared secret mismatch');
+  });
+
+  it('raises the named bad-response error when discovery answers with something other than JSON', async () => {
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeRawFetch(400, '<html></html>', 'text/html'));
+
+    const error = await client.discover().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AgentBadResponseError);
+    expect((error as Error).message).toBe(
+      'wp-journeys agent at https://wpjtest.wp.test/wp-admin/admin-post.php?action=wpj_discover did not return JSON (HTTP 400) — is the agent mounted and the base URL right?',
+    );
   });
 
   it('turns the agent refusal into a named error rather than a generic HTTP failure', async () => {

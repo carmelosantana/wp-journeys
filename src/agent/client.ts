@@ -1,9 +1,10 @@
 /**
- * The typed client for the companion mu-plugin's single REST route.
+ * The typed client for the companion mu-plugin.
  *
  * Every capability the runner needs from inside WordPress — discovery, the log delta, the
- * state snapshot, login minting — arrives through this one route, so there is exactly one
- * seam to secure and exactly one code path whether or not wp-cli is available.
+ * state snapshot, login minting — arrives through the agent, behind one guard and one shared
+ * secret, whether or not wp-cli is available. Two doors lead in: the REST route for most
+ * actions, and admin-post.php for discovery, which must run where `is_admin()` is true.
  */
 
 import type { RawRegistries } from '../discovery/types.ts';
@@ -31,18 +32,35 @@ export class AgentBadResponseError extends Error {}
 const ROUTE = '/wp-journeys/v1/agent';
 
 /**
- * The agent's URL for a site's base URL.
- *
- * Addressed as `?rest_route=` rather than `/wp-json/`, because plain permalinks — WordPress's
- * default — leave `/wp-json/` unrouted (it serves the home page). The base path is kept, so a
- * WordPress in a subdirectory works, and normalised to end in exactly one `/`: POSTing to `/sub`
- * can earn a 301 to `/sub/`, which fetch follows as a GET.
+ * A site's base URL normalised to end in exactly one `/`, so relative paths resolve inside it.
+ * The base path is kept, so a WordPress in a subdirectory works; POSTing to `/sub` can earn a
+ * 301 to `/sub/`, which fetch follows as a GET.
  */
-function agentUrl(baseUrl: string): string {
+function siteBase(baseUrl: string): URL {
   const url = new URL(baseUrl);
   url.pathname = url.pathname.replace(/\/*$/, '/');
   url.hash = '';
+  return url;
+}
+
+/**
+ * The agent's REST URL. Addressed as `?rest_route=` rather than `/wp-json/`, because plain
+ * permalinks — WordPress's default — leave `/wp-json/` unrouted (it serves the home page).
+ */
+function agentUrl(baseUrl: string): string {
+  const url = siteBase(baseUrl);
   url.searchParams.set('rest_route', ROUTE);
+  return url.toString();
+}
+
+/**
+ * Discovery's URL. admin-post.php defines WP_ADMIN, so plugins that register their menus only
+ * when `is_admin()` do so; a REST request would miss them. Not admin-ajax.php: many plugins
+ * also skip menu registration under DOING_AJAX.
+ */
+function discoverUrl(baseUrl: string): string {
+  const url = new URL('wp-admin/admin-post.php', siteBase(baseUrl));
+  url.searchParams.set('action', 'wpj_discover');
   return url.toString();
 }
 
@@ -52,12 +70,14 @@ export function createAgentClient(
   fetchImpl: typeof fetch = fetch,
 ): AgentClient {
   const endpoint = agentUrl(baseUrl);
+  const discoverEndpoint = discoverUrl(baseUrl);
 
-  async function call<T>(action: string, args: Record<string, unknown> = {}): Promise<T> {
-    const response = await fetchImpl(endpoint, {
+  /** One request path for both doors: the same secret header and the same named errors. */
+  async function post<T>(url: string, body: unknown, label: string): Promise<T> {
+    const response = await fetchImpl(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-WPJ-Secret': secret },
-      body: JSON.stringify({ action, args }),
+      body: JSON.stringify(body),
     });
     const text = await response.text();
     let payload: Record<string, unknown>;
@@ -65,7 +85,7 @@ export function createAgentClient(
       payload = JSON.parse(text) as Record<string, unknown>;
     } catch {
       throw new AgentBadResponseError(
-        `wp-journeys agent at ${endpoint} did not return JSON (HTTP ${response.status}) — is the agent mounted and the base URL right?`,
+        `wp-journeys agent at ${url} did not return JSON (HTTP ${response.status}) — is the agent mounted and the base URL right?`,
       );
     }
     if (response.status === 403 && payload.code === 'wpj_refused') {
@@ -74,13 +94,17 @@ export function createAgentClient(
       );
     }
     if (!response.ok) {
-      throw new Error(`wp-journeys agent returned HTTP ${response.status} for "${action}"`);
+      throw new Error(`wp-journeys agent returned HTTP ${response.status} for "${label}"`);
     }
     return payload as T;
   }
 
+  function call<T>(action: string, args: Record<string, unknown> = {}): Promise<T> {
+    return post<T>(endpoint, { action, args }, action);
+  }
+
   return {
     status: () => call<AgentStatus>('status'),
-    discover: () => call<RawRegistries>('discover'),
+    discover: () => post<RawRegistries>(discoverEndpoint, {}, 'discover'),
   };
 }

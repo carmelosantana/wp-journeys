@@ -79,6 +79,47 @@ describe('projectSurface', () => {
     ]);
   });
 
+  it('hangs a plugin page under a core parent off the parent file, not admin.php', () => {
+    // add_options_page() pages are linked by WordPress's own menu at options-general.php?page=.
+    const surface = projectSurface({
+      ...raw,
+      menu: [['Settings', 'manage_options', 'options-general.php']],
+      submenu: {
+        'options-general.php': [
+          ['General', 'manage_options', 'options-general.php'],
+          ['Acme Options', 'manage_options', 'acme-options'],
+          ['Writing', 'manage_options', 'options-writing.php'],
+        ],
+      },
+    });
+
+    expect(surface.screens.map((s) => s.url)).toEqual([
+      '/wp-admin/options-general.php',
+      '/wp-admin/options-general.php?page=acme-options',
+      '/wp-admin/options-writing.php',
+    ]);
+  });
+
+  it('joins page= with & when the core parent already carries a query', () => {
+    const surface = projectSurface({
+      ...raw,
+      menu: [['Acme Items', 'edit_posts', 'edit.php?post_type=acme']],
+      submenu: { 'edit.php?post_type=acme': [['Report', 'edit_posts', 'acme-report']] },
+    });
+
+    expect(surface.screens.map((s) => s.url)).toEqual([
+      '/wp-admin/edit.php?post_type=acme',
+      '/wp-admin/edit.php?post_type=acme&page=acme-report',
+    ]);
+  });
+
+  it('keeps a page under a plugin top-level menu on admin.php?page=', () => {
+    const surface = projectSurface(raw);
+    expect(surface.screens.find((s) => s.slug === 'acme-settings')?.url).toBe(
+      '/wp-admin/admin.php?page=acme-settings',
+    );
+  });
+
   it('skips menu separators, which are not screens', () => {
     // WordPress keeps or drops a trailing separator depending on what sorts after it, so a
     // separator projected as a screen flips in and out of the delta with the plugin.

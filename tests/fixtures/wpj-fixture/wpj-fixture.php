@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: wp-journeys fixture
- * Description: Test fixture with a KNOWN surface, so discovery's plugin attribution can be proven. It registers exactly one top-level admin menu, one submenu, one shortcode, one dynamic block, and one REST route. Add nothing else here: the live proof expects exactly these five.
+ * Description: Test fixture with a KNOWN surface, so discovery's plugin attribution can be proven. It registers exactly: admin pages wpj-fixture (top level), wpj-fixture-settings (under it), wpj-fixture-options (under core Settings) and wpj-fixture-admin-only (top level, registered only when is_admin()); shortcode wpj_fixture; dynamic block wpj-fixture/hello; REST route wpj-fixture/v1/ping. Add nothing else here: the live proof expects exactly these.
  * Version: 0.1.0
  * License: MIT
  *
@@ -17,6 +17,18 @@ add_action('admin_menu', 'wpj_fixture_admin_menu');
 function wpj_fixture_admin_menu() {
     add_menu_page('WPJ Fixture', 'WPJ Fixture', 'manage_options', 'wpj-fixture', 'wpj_fixture_render_page');
     add_submenu_page('wpj-fixture', 'WPJ Fixture Settings', 'Settings', 'manage_options', 'wpj-fixture-settings', 'wpj_fixture_render_settings');
+    // Under a CORE parent: WordPress's menu links it at options-general.php?page=.
+    add_options_page('WPJ Fixture Options', 'WPJ Fixture Options', 'manage_options', 'wpj-fixture-options', 'wpj_fixture_render_options');
+}
+
+// Registered ONLY in a wp-admin request, the common pattern a REST request cannot see
+// (is_admin() is false there).
+if (is_admin()) {
+    add_action('admin_menu', 'wpj_fixture_admin_only_menu');
+}
+
+function wpj_fixture_admin_only_menu() {
+    add_menu_page('WPJ Fixture Admin Only', 'WPJ Fixture Admin Only', 'manage_options', 'wpj-fixture-admin-only', 'wpj_fixture_render_admin_only');
 }
 
 function wpj_fixture_render_page() {
@@ -25,6 +37,14 @@ function wpj_fixture_render_page() {
 
 function wpj_fixture_render_settings() {
     echo '<div class="wrap"><h1>WPJ Fixture Settings</h1></div>';
+}
+
+function wpj_fixture_render_options() {
+    echo '<div class="wrap"><h1>WPJ Fixture Options</h1></div>';
+}
+
+function wpj_fixture_render_admin_only() {
+    echo '<div class="wrap"><h1>WPJ Fixture Admin Only</h1></div>';
 }
 
 add_shortcode('wpj_fixture', 'wpj_fixture_shortcode');

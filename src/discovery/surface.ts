@@ -22,16 +22,28 @@ function readRow(row: unknown[]): { title: string; capability: string; slug: str
   return { title, capability, slug };
 }
 
+/** Whether a menu slug names a wp-admin file (`edit.php`, `edit.php?post_type=acme`). */
+function isAdminFile(slug: string): boolean {
+  return (slug.split('?')[0] ?? slug).endsWith('.php');
+}
+
 /**
- * A slug whose path ends in `.php` is a core screen reachable at its own path, query string
- * and all (`edit.php?post_type=acme`); anything else is a plugin page hung off
- * `admin.php?page=`. Getting this wrong sends every plugin screen to a 404 — which is
- * caught ONLY because `classifyNavigation` (Task 9) treats a non-2xx main document as a
- * defect. The subresource policy would let it pass green.
+ * Where WordPress actually serves a screen:
+ * - a slug that is itself a `.php` file is reachable at its own path, query string and all;
+ * - a plugin page under a CORE parent (`add_options_page()`, a CPT's `edit.php?post_type=x`)
+ *   gets the URL WordPress's own menu links it at: the parent file with `?page=`, or `&page=`
+ *   when the parent already has a query. (On WP 7.1, `admin.php?page=` also resolves such a
+ *   page, via `get_admin_page_parent()`, but the parent-file URL is the canonical one.)
+ * - any other plugin page hangs off `admin.php?page=`.
+ * Getting this wrong sends screens to a 403/404 — caught ONLY because `classifyNavigation`
+ * (Task 9) treats a non-2xx main document as a defect.
  */
-function urlFor(slug: string): string {
-  const path = slug.split('?')[0] ?? slug;
-  return path.endsWith('.php') ? `/wp-admin/${slug}` : `/wp-admin/admin.php?page=${slug}`;
+function urlFor(slug: string, parent: string | null): string {
+  if (isAdminFile(slug)) return `/wp-admin/${slug}`;
+  if (parent !== null && isAdminFile(parent)) {
+    return `/wp-admin/${parent}${parent.includes('?') ? '&' : '?'}page=${slug}`;
+  }
+  return `/wp-admin/admin.php?page=${slug}`;
 }
 
 export function projectSurface(raw: RawRegistries): Surface {
@@ -40,13 +52,13 @@ export function projectSurface(raw: RawRegistries): Surface {
   for (const row of raw.menu) {
     const parsed = readRow(row);
     if (!parsed) continue;
-    screens.push({ ...parsed, url: urlFor(parsed.slug), parent: null });
+    screens.push({ ...parsed, url: urlFor(parsed.slug, null), parent: null });
     for (const child of raw.submenu[parsed.slug] ?? []) {
       const sub = readRow(child);
       // add_submenu_page() mirrors the parent into its own submenu as a link back to itself:
       // the same screen again, so projecting it would double every plugin's top-level page.
       if (!sub || sub.slug === parsed.slug) continue;
-      screens.push({ ...sub, url: urlFor(sub.slug), parent: parsed.slug });
+      screens.push({ ...sub, url: urlFor(sub.slug, parsed.slug), parent: parsed.slug });
     }
   }
 
