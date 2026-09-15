@@ -4,15 +4,23 @@
  *
  * Two rules shape this file:
  *
- * 1. The runner touches ONLY users it created. An actor is identified by its login AND its
- *    reserved-.invalid mail address together; a user that merely carries the login — a real
- *    person who happened to be called `wpj_editor` — is refused rather than adopted,
- *    provisioned over, or logged into.
- * 2. A minted token is live auth material. It is stored only as a SHA-256 hash, spent by the
- *    one request that actually deletes its row, and never written to a log.
+ * 1. The runner touches ONLY users it created, and it knows which those are from a mark it
+ *    writes itself: the `wpj_actor` user meta, set once at creation. The login and the
+ *    reserved-.invalid mail address are a cheap pre-filter and nothing more — both are
+ *    deterministic and published right here, so on a site with open registration a visitor
+ *    could register `wpj_administrator` with that very address. Without the mark such a user
+ *    is a CONFLICT: never adopted, never promoted, never logged into.
+ * 2. A minted token is live auth material. It comes from random_bytes(), is stored only as a
+ *    SHA-256 hash, is spent by the one request that actually deletes its row, and is never
+ *    written to a log.
  *
- * The naming and token rules are pure, so they are tested without WordPress; the functions
- * that read and write the database are thin wrappers over them.
+ * One caveat on that "one request": it holds on the database transient path, where
+ * delete_transient() deletes a row and reports whether it removed one. With a persistent
+ * object cache in place it delegates to wp_cache_delete(), and how two simultaneous deletes
+ * race is then the caching backend's business, not ours.
+ *
+ * The naming, ownership and token rules are pure, so they are tested without WordPress; the
+ * functions that read and write the database are thin wrappers over them.
  */
 
 /**
@@ -56,6 +64,55 @@ function wpj_actor_role_for($login, $email) {
     return '';
 }
 
+/** The user meta key the runner stamps its own users with, holding the actor's role. */
+function wpj_actor_meta_key() {
+    return 'wpj_actor';
+}
+
+/**
+ * The role the runner OWNS this user as, or '' for every other user on the site.
+ *
+ * The mark is the authority. The login and mail pre-filter is kept because it is free and
+ * catches the ordinary case first, but on its own it proves nothing: anyone who can register
+ * can choose both halves. Only the runner can write the meta.
+ *
+ * @param string $login a user's user_login
+ * @param string $email that user's user_email
+ * @param mixed  $mark  that user's wpj_actor meta ('' or false when absent)
+ * @return string the actor role, or '' for any user the runner does not own
+ */
+function wpj_actor_owned_role($login, $email, $mark) {
+    $role = wpj_actor_role_for($login, $email);
+    if ($role === '' || !is_string($mark) || $mark !== $role) {
+        return '';
+    }
+    return $role;
+}
+
+/**
+ * Why this role gets no user, or '' when it gets one.
+ *
+ * `anonymous` is not an error the caller should go hunting for: it is a real actor that simply
+ * has no login, and saying so is the difference between a puzzling failure and an obvious one.
+ *
+ * @param mixed $role
+ * @return string
+ */
+function wpj_actor_provision_refusal($role) {
+    if (wpj_actor_login($role) !== '') {
+        return '';
+    }
+    if ($role === 'anonymous') {
+        return 'anonymous has no user: it is the one actor the runner never provisions';
+    }
+    // A non-string role names its type rather than being cast: "Array to string conversion"
+    // would put a warning in debug.log, which the runner reads as the plugin's own signal.
+    return sprintf(
+        'unknown actor role %s',
+        is_string($role) ? '"' . $role . '"' : '(' . gettype($role) . ')'
+    );
+}
+
 /**
  * Exactly 32 alphanumerics.
  * Anchored with \A and \z, because PHP's $ also matches immediately before a trailing newline.
@@ -79,18 +136,21 @@ function wpj_login_token_key($token) {
  * @return array{userId:int}|WP_Error
  */
 function wpj_ensure_actor($role) {
-    $login = wpj_actor_login($role);
-    if ($login === '') {
+    $refusal = wpj_actor_provision_refusal($role);
+    if ($refusal !== '') {
         return new WP_Error(
-            'wpj_bad_role',
-            sprintf('unknown actor role "%s"', is_string($role) ? $role : gettype($role)),
+            $role === 'anonymous' ? 'wpj_anonymous_actor' : 'wpj_bad_role',
+            $refusal,
             array('status' => 400)
         );
     }
+    $login = wpj_actor_login($role);
 
     $user = get_user_by('login', $login);
     if ($user) {
-        if (wpj_actor_role_for($user->user_login, $user->user_email) !== $role) {
+        // The mark decides. A user who merely looks like an actor is somebody else's account:
+        // adopting it here would hand its owner whatever role the runner went on to set.
+        if (wpj_actor_owned_role_of_user($user) !== $role) {
             return new WP_Error(
                 'wpj_actor_conflict',
                 sprintf('a user named "%s" exists that the runner did not create; refusing to touch it', $login),
@@ -107,8 +167,10 @@ function wpj_ensure_actor($role) {
 
     $id = wp_insert_user(array(
         'user_login' => $login,
-        // Generated, never returned and never recorded: a minted token is the only way in.
-        'user_pass' => wp_generate_password(64, true, true),
+        // random_bytes(), not wp_generate_password(): that one returns through the
+        // `random_password` filter, so the plugin under test could read or pin it.
+        // Never returned and never recorded — a minted token is the only way in.
+        'user_pass' => bin2hex(random_bytes(32)),
         'user_email' => wpj_actor_email($role),
         'display_name' => 'wp-journeys ' . $role,
         'role' => $role,
@@ -116,7 +178,27 @@ function wpj_ensure_actor($role) {
     if (is_wp_error($id)) {
         return $id;
     }
+    // The mark, written here and nowhere else, is what every later ownership decision reads.
+    // $unique = true, so it can never become a second, conflicting value.
+    add_user_meta((int) $id, wpj_actor_meta_key(), $role, true);
     return array('userId' => (int) $id);
+}
+
+/**
+ * The role the runner owns this user as, reading the mark it wrote at creation.
+ *
+ * @param WP_User|false $user
+ * @return string the actor role, or '' for any user the runner does not own
+ */
+function wpj_actor_owned_role_of_user($user) {
+    if (!$user || !isset($user->ID)) {
+        return '';
+    }
+    return wpj_actor_owned_role(
+        $user->user_login,
+        $user->user_email,
+        get_user_meta((int) $user->ID, wpj_actor_meta_key(), true)
+    );
 }
 
 /**
@@ -131,9 +213,10 @@ function wpj_mint_login($user_id) {
     if (!$user) {
         return new WP_Error('wpj_bad_user', 'no such user', array('status' => 400));
     }
-    if (wpj_actor_role_for($user->user_login, $user->user_email) === '') {
-        // This endpoint hands out live auth material. It does so only for users the runner
-        // created, so even a leaked secret cannot become a session as a real person.
+    if (wpj_actor_owned_role_of_user($user) === '') {
+        // This endpoint hands out live auth material. It does so only for users carrying the
+        // runner's own mark, so neither a leaked secret nor a registered look-alike can become
+        // a session as a real person.
         return new WP_Error(
             'wpj_not_an_actor',
             'refusing to mint a login for a user the runner did not create',
@@ -141,7 +224,9 @@ function wpj_mint_login($user_id) {
         );
     }
 
-    $token = wp_generate_password(32, false);
+    // 16 random bytes as 32 hex characters. Not wp_generate_password(), whose result passes
+    // through the `random_password` filter — the plugin under test could watch every token.
+    $token = bin2hex(random_bytes(16));
     // Five minutes: long enough for the browser to follow the URL, short enough that an
     // unspent token is worthless by the time anyone finds it.
     set_transient(wpj_login_token_key($token), $user_id, 300);
@@ -170,11 +255,14 @@ function wpj_consume_login($token) {
         return;
     }
     $user = get_userdata($user_id);
-    if (!$user || wpj_actor_role_for($user->user_login, $user->user_email) === '') {
+    if (!$user || wpj_actor_owned_role_of_user($user) === '') {
         return;
     }
 
-    wp_set_auth_cookie($user_id, true);
+    // $remember = false. A five-minute token has no business minting a fourteen-day session:
+    // the cookie outlives the journey, and Playwright's retain-on-failure trace would carry it
+    // into an artefact. Core's non-remembered expiry is ample for a journey.
+    wp_set_auth_cookie($user_id, false);
     // Nothing between here and the browser may cache a response carrying a session cookie.
     nocache_headers();
     wp_safe_redirect(admin_url());

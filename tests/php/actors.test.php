@@ -56,6 +56,59 @@ wpj_assert(
 );
 wpj_assert('an empty login is not an actor', '', wpj_actor_role_for('', ''));
 
+// --- the ownership mark: login and mail are a pre-filter, the meta mark is the authority ---
+
+wpj_assert('the mark lives under one meta key', 'wpj_actor', wpj_actor_meta_key());
+wpj_assert(
+    'a user carrying the mark the runner wrote at creation is owned',
+    'editor',
+    wpj_actor_owned_role('wpj_editor', 'wpj_editor@wp-journeys.invalid', 'editor')
+);
+wpj_assert(
+    'a forged user with the right login and the right mail but NO mark is not owned: both halves are published in this source, so anyone who can register can pick them',
+    '',
+    wpj_actor_owned_role('wpj_editor', 'wpj_editor@wp-journeys.invalid', '')
+);
+wpj_assert(
+    'an absent mark reads back from get_user_meta() as false, and false is not ownership',
+    '',
+    wpj_actor_owned_role('wpj_editor', 'wpj_editor@wp-journeys.invalid', false)
+);
+wpj_assert(
+    'a mark naming a different role does not own this one',
+    '',
+    wpj_actor_owned_role('wpj_editor', 'wpj_editor@wp-journeys.invalid', 'author')
+);
+wpj_assert(
+    'a mark cannot rescue a user whose mail is not the runner\'s',
+    '',
+    wpj_actor_owned_role('wpj_editor', 'boss@example.com', 'editor')
+);
+wpj_assert(
+    'a non-string mark is not ownership',
+    '',
+    wpj_actor_owned_role('wpj_editor', 'wpj_editor@wp-journeys.invalid', array('editor'))
+);
+
+// --- why a role is not provisioned ----------------------------------------------------------
+
+wpj_assert('a role the runner provisions is not refused', '', wpj_actor_provision_refusal('editor'));
+wpj_assert(
+    'anonymous is refused as the actor that needs no user, not as an unknown role',
+    'anonymous has no user: it is the one actor the runner never provisions',
+    wpj_actor_provision_refusal('anonymous')
+);
+wpj_assert(
+    'an unknown role is refused as unknown',
+    'unknown actor role "superadmin"',
+    wpj_actor_provision_refusal('superadmin')
+);
+wpj_assert(
+    'a non-string role names its type rather than being cast into a warning',
+    'unknown actor role (array)',
+    wpj_actor_provision_refusal(array())
+);
+
 // --- the one-time login token ---------------------------------------------------------------
 
 wpj_assert('a 32-character alphanumeric token is well-formed', true, wpj_login_token_valid(str_repeat('a1B2', 8)));
