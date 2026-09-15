@@ -53,5 +53,25 @@ wpj_assert(
     'WPJ_AGENT is not enabled',
     wpj_guard_verdict(array())
 );
+wpj_assert(
+    'enabled as the string "false" is refused, not coerced to true',
+    'WPJ_AGENT is not enabled',
+    wpj_guard_verdict(array_merge($ok, array('enabled' => 'false')))
+);
+wpj_assert(
+    'enabled as the string "1" is refused; only boolean true counts',
+    'WPJ_AGENT is not enabled',
+    wpj_guard_verdict(array_merge($ok, array('enabled' => '1')))
+);
+wpj_assert(
+    'enabled as the int 1 is refused; only boolean true counts',
+    'WPJ_AGENT is not enabled',
+    wpj_guard_verdict(array_merge($ok, array('enabled' => 1)))
+);
+wpj_assert(
+    'wp_debug as the int 1 is refused; only boolean true counts',
+    'WP_DEBUG is off',
+    wpj_guard_verdict(array_merge($ok, array('wp_debug' => 1)))
+);
 
 exit($fails === 0 ? 0 : 1);
