@@ -59,6 +59,24 @@ describe('classifyPhpLogLine', () => {
     });
   });
 
+  it('flags a PHP warning glued behind a newline-less error_log($msg, 3, $log) fragment', () => {
+    // error_log() type 3 appends no newline, so the log tail holds the fragment back and the
+    // next diagnostic arrives glued to it. The finding must still be seen, without the fragment.
+    const line = 'acme: sync done[15-Sep-2026 23:12:24 UTC] PHP Warning:  Undefined array key "id" in /var/www/html/wp-content/plugins/acme/acme.php on line 42';
+    expect(classifyPhpLogLine(line)).toEqual({
+      kind: 'phplog',
+      text: 'PHP Warning: Undefined array key "id" in /var/www/html/wp-content/plugins/acme/acme.php on line 42',
+    });
+  });
+
+  it('flags a wpdb query error glued behind a newline-less fragment', () => {
+    const line = "acme: sync done[15-Sep-2026 23:12:25 UTC] WordPress database error Table 'wordpress.wpj_no_such_table' doesn't exist for query SELECT wpj_probe FROM wpj_no_such_table made by acme_sync";
+    expect(classifyPhpLogLine(line)).toEqual({
+      kind: 'phplog',
+      text: "WordPress database error Table 'wordpress.wpj_no_such_table' doesn't exist for query SELECT wpj_probe FROM wpj_no_such_table made by acme_sync",
+    });
+  });
+
   it('ignores core’s own cron reschedule error, which no plugin under test can be blamed for', () => {
     // The format of wp-cron.php's error_log() call; not plugin-attributable (R34).
     const line = '[15-Sep-2026 23:10:00 UTC] Cron reschedule event error for hook: wpj_fixture_daily, Error code: could_not_set, Error message: The cron event list could not be saved., Data: {"schedule":"daily","args":[],"interval":86400}';

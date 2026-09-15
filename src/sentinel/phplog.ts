@@ -24,14 +24,22 @@ export interface Finding {
   status?: number;
 }
 
+/*
+ * The PHP and wpdb shapes are anchored on their FORMAT — PHP's `[dd-Mon-yyyy HH:MM:SS TZ] `
+ * stamp — not on the start of the line. A plugin's `error_log($msg, 3, $log)` appends no
+ * newline, so the log tail holds that fragment back and the next diagnostic arrives glued
+ * behind it (`acme: sync done[15-Sep-2026 …] PHP Warning: …`). Anchoring at `^` would read
+ * that as clean.
+ */
+
 /** `[date] PHP <Severity>:  <message>` — the shape PHP's own error handler writes. */
-const PHP_DIAGNOSTIC = /^\[[^\]]*\]\s*PHP\s+(Warning|Notice|Deprecated|Fatal error|Parse error|Recoverable fatal error|Strict Standards):\s*(.+)$/;
+const PHP_DIAGNOSTIC = /\[\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2} [^\]]+\]\s*PHP\s+(Warning|Notice|Deprecated|Fatal error|Parse error|Recoverable fatal error|Strict Standards):\s*(.+)$/;
 
 /** WordPress's `_doing_it_wrong()` and `_deprecated_*()` family, which log without the `PHP` prefix. */
 const WP_DIAGNOSTIC = /(was called incorrectly|is <?deprecated|Deprecated since version)/i;
 
 /** wpdb's failed-query line (class-wpdb.php), which logs without the `PHP` prefix. */
-const WPDB_DIAGNOSTIC = /^\[[^\]]*\]\s*WordPress database error .*for query /;
+const WPDB_DIAGNOSTIC = /\[\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2} [^\]]+\]\s*(WordPress database error .*for query .*)$/;
 
 /** The leading `[date] ` PHP's error_log() adds. */
 const LOG_DATE = /^\[[^\]]*\]\s*/;
@@ -47,12 +55,18 @@ export function classifyPhpLogLine(line: string): Finding | null {
   // A stack trace belongs to the diagnostic above it, which is already reported.
   if (trimmed === 'Stack trace:' || /^#\d+\s/.test(trimmed)) return null;
 
+  // Text is taken from the match onward, so a glued fragment never reaches the summary.
   const php = PHP_DIAGNOSTIC.exec(trimmed);
   if (php) {
     return { kind: 'phplog', text: `PHP ${php[1]}: ${readable(php[2]!)}` };
   }
 
-  if (WP_DIAGNOSTIC.test(trimmed) || WPDB_DIAGNOSTIC.test(trimmed)) {
+  const wpdb = WPDB_DIAGNOSTIC.exec(trimmed);
+  if (wpdb) {
+    return { kind: 'phplog', text: readable(wpdb[1]!) };
+  }
+
+  if (WP_DIAGNOSTIC.test(trimmed)) {
     return { kind: 'phplog', text: readable(trimmed.replace(LOG_DATE, '')) };
   }
 
