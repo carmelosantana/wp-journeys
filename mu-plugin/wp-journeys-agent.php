@@ -14,6 +14,7 @@
 require_once __DIR__ . '/src/guard.php';
 require_once __DIR__ . '/src/discovery.php';
 require_once __DIR__ . '/src/snapshot.php';
+require_once __DIR__ . '/src/logtail.php';
 
 /** Read the live environment into the shape wpj_guard_verdict() expects. */
 function wpj_agent_env() {
@@ -67,6 +68,8 @@ function wpj_agent_dispatch($request) {
             );
         case 'snapshot':
             return wpj_snapshot();
+        case 'logDelta':
+            return wpj_log_delta($request->get_param('args')['offset'] ?? 0);
     }
     return new WP_Error('wpj_unknown_action', sprintf('unknown action "%s"', $action), array('status' => 400));
 }

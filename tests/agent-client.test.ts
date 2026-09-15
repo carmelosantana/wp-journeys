@@ -112,6 +112,22 @@ describe('createAgentClient', () => {
     expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({ action: 'snapshot', args: {} });
   });
 
+  it('reads the debug.log delta through the REST route, sending the offset', async () => {
+    const delta = { offset: 512, lines: ['[15-Sep-2026 22:40:00 UTC] PHP Notice:  x in /x.php on line 1'], available: true };
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, delta));
+
+    expect(await client.logDelta(382)).toEqual(delta);
+    expect(fakeFetch.lastUrl).toBe('https://wpjtest.wp.test/?rest_route=%2Fwp-journeys%2Fv1%2Fagent');
+    expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({ action: 'logDelta', args: { offset: 382 } });
+  });
+
+  it('passes a lost log signal through as lost, never as an empty clean delta', async () => {
+    const lost = { offset: 0, lines: [], available: false, reason: 'WP_DEBUG_LOG is off' };
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, lost));
+
+    expect(await client.logDelta(0)).toEqual(lost);
+  });
+
   it('turns the agent refusal into a named error rather than a generic HTTP failure', async () => {
     const f = fakeFetch(403, { code: 'wpj_refused', message: 'WP_DEBUG is off' });
     const client = createAgentClient('https://wpjtest.wp.test', 's3cret', f);

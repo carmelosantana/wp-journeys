@@ -18,11 +18,20 @@ export interface AgentStatus {
   debugLog: boolean;
 }
 
+/** Bytes written to debug.log since a prior offset. `available: false` means the signal is LOST, not clean. */
+export interface LogDelta {
+  offset: number;
+  lines: string[];
+  available: boolean;
+  reason?: string;
+}
+
 /** The agent's callable surface. Later tasks widen this interface. */
 export interface AgentClient {
   status(): Promise<AgentStatus>;
   discover(): Promise<RawRegistries>;
   snapshot(): Promise<Snapshot>;
+  logDelta(offset: number): Promise<LogDelta>;
 }
 
 /** The agent refused to serve (its guard said no). Distinct from a transport failure. */
@@ -109,5 +118,6 @@ export function createAgentClient(
     status: () => call<AgentStatus>('status'),
     discover: () => post<RawRegistries>(discoverEndpoint, {}, 'discover'),
     snapshot: () => call<Snapshot>('snapshot'),
+    logDelta: (offset: number) => call<LogDelta>('logDelta', { offset }),
   };
 }
