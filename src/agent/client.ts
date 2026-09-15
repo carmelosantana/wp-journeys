@@ -37,6 +37,16 @@ export interface AgentClient {
   snapshot(): Promise<Snapshot>;
   /** The delta since `offset`, or with `'end'` a size-only baseline that returns no lines. */
   logDelta(offset: number | 'end'): Promise<LogDelta>;
+  /**
+   * Create, or find, the runner's own WordPress user for a role, and return its id.
+   * Idempotent: the same role always answers with the same user.
+   */
+  ensureActor(role: string): Promise<{ userId: number }>;
+  /**
+   * A single-use, five-minute URL that authenticates a browser as one of the runner's actors.
+   * The agent mints one only for users it created, never for a real person's account.
+   */
+  mintLogin(userId: number): Promise<{ url: string }>;
 }
 
 /** The agent refused to serve (its guard said no). Distinct from a transport failure. */
@@ -130,6 +140,15 @@ export function createAgentClient(
         throw new RangeError(`logDelta offset must be 'end' or a non-negative integer, got ${String(offset)}`);
       }
       return call<LogDelta>('logDelta', { offset });
+    },
+    ensureActor: (role: string) => call<{ userId: number }>('ensureActor', { role }),
+    mintLogin: async (userId: number) => {
+      // PHP casts a float to an int, so 2.9 would mint a session as user 2 — a different
+      // actor, with nothing in the result to show the runner drove the wrong one.
+      if (!(Number.isInteger(userId) && userId > 0)) {
+        throw new RangeError(`mintLogin needs a positive integer user id, got ${String(userId)}`);
+      }
+      return call<{ url: string }>('mintLogin', { userId });
     },
   };
 }

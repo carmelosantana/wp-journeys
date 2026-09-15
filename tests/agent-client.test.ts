@@ -157,4 +157,40 @@ describe('createAgentClient', () => {
       'wp-journeys agent refused the request: WP_DEBUG is off',
     );
   });
+
+  it('provisions an actor through the REST route, sending the role', async () => {
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, { userId: 7 }));
+
+    expect(await client.ensureActor('editor')).toEqual({ userId: 7 });
+    expect(fakeFetch.lastUrl).toBe('https://wpjtest.wp.test/?rest_route=%2Fwp-journeys%2Fv1%2Fagent');
+    expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({
+      action: 'ensureActor',
+      args: { role: 'editor' },
+    });
+  });
+
+  it('mints a login through the REST route, sending the user id', async () => {
+    const minted = { url: 'https://wpjtest.wp.test/?wpj_login=TOKEN' };
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, minted));
+
+    expect(await client.mintLogin(7)).toEqual(minted);
+    expect(fakeFetch.lastUrl).toBe('https://wpjtest.wp.test/?rest_route=%2Fwp-journeys%2Fv1%2Fagent');
+    expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({
+      action: 'mintLogin',
+      args: { userId: 7 },
+    });
+  });
+
+  it('refuses a user id that is not a positive integer, before any request', async () => {
+    // PHP casts 2.9 to 2, so a fractional id would quietly mint a session for a DIFFERENT
+    // actor: a journey running as the wrong user, with nothing to show that it did.
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, { url: 'x' }));
+    for (const bad of [0, -1, 2.9, Number.NaN]) {
+      fakeFetch.lastUrl = '';
+      await expect(client.mintLogin(bad), String(bad)).rejects.toThrow(
+        `mintLogin needs a positive integer user id, got ${String(bad)}`,
+      );
+      expect(fakeFetch.lastUrl, String(bad)).toBe('');
+    }
+  });
 });

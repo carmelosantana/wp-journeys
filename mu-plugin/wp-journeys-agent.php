@@ -6,15 +6,18 @@
  * PHP 7.4-compatible syntax on purpose: this file runs on whatever WordPress the runner is
  * pointed at, not on the runner's own toolchain.
  *
- * Two doors, one gate: the REST route serves most actions; discovery is served from
+ * Three doors, one gate: the REST route serves most actions; discovery is served from
  * admin-post.php, because only there is is_admin() true, and many plugins register their
- * admin menus only when it is.
+ * admin menus only when it is; and a minted `?wpj_login=` URL logs a browser in as one of the
+ * runner's own actors. That last door is opened by a navigation, which cannot carry the secret
+ * header, so the single-use token in the URL is its credential — behind the same guard.
  */
 
 require_once __DIR__ . '/src/guard.php';
 require_once __DIR__ . '/src/discovery.php';
 require_once __DIR__ . '/src/snapshot.php';
 require_once __DIR__ . '/src/logtail.php';
+require_once __DIR__ . '/src/actors.php';
 
 /** Read the live environment into the shape wpj_guard_verdict() expects. */
 function wpj_agent_env() {
@@ -70,8 +73,32 @@ function wpj_agent_dispatch($request) {
             return wpj_snapshot();
         case 'logDelta':
             return wpj_log_delta($request->get_param('args')['offset'] ?? 0);
+        case 'ensureActor':
+            return wpj_ensure_actor(wpj_agent_arg($request, 'role', ''));
+        case 'mintLogin':
+            return wpj_mint_login(wpj_agent_arg($request, 'userId', 0));
     }
     return new WP_Error('wpj_unknown_action', sprintf('unknown action "%s"', $action), array('status' => 400));
+}
+
+/**
+ * One value out of the request's `args` object.
+ *
+ * An array is replaced by the default rather than cast: "Array to string conversion" would
+ * write a warning to debug.log, and the runner reads that log as the plugin under test's
+ * signal.
+ *
+ * @param WP_REST_Request $request
+ * @param string          $name
+ * @param mixed           $default
+ * @return mixed
+ */
+function wpj_agent_arg($request, $name, $default) {
+    $args = $request->get_param('args');
+    if (!is_array($args) || !isset($args[$name]) || is_array($args[$name])) {
+        return $default;
+    }
+    return $args[$name];
 }
 
 // Both hooks: a secret-only request is logged out (nopriv), but a stray admin cookie must not
@@ -98,4 +125,27 @@ function wpj_agent_discover_endpoint() {
         ), $status);
     }
     wp_send_json($result, 200);
+}
+
+// The third door: a browser following a minted URL. It runs on every request, so it does as
+// little as possible before deciding this is not one of ours.
+add_action('init', 'wpj_agent_login_endpoint');
+
+/**
+ * `?wpj_login=<token>`: spend the token and authenticate as that actor.
+ *
+ * The guard applies here exactly as it does to the other doors — on a site the agent may not
+ * serve, a token is inert. The shared secret deliberately does NOT apply: a browser navigation
+ * cannot carry the header, so the single-use token is the credential, and it only ever names a
+ * user the runner created.
+ */
+function wpj_agent_login_endpoint() {
+    $raw = isset($_GET['wpj_login']) ? wp_unslash($_GET['wpj_login']) : '';
+    if (!is_string($raw) || $raw === '') {
+        return;
+    }
+    if (wpj_guard_verdict(wpj_agent_env()) !== '') {
+        return;
+    }
+    wpj_consume_login(sanitize_text_field($raw));
 }
