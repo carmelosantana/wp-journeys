@@ -21,6 +21,7 @@ import type { Browser } from '@playwright/test';
 import { chromium, expect, test } from '@playwright/test';
 
 import { ALL_ACTORS, Actor } from '../../src/actors/roles.ts';
+import type { AgentClient } from '../../src/agent/client.ts';
 import { createAgentClient } from '../../src/agent/client.ts';
 import { loadConfig } from '../../src/config.ts';
 import { projectSurface } from '../../src/discovery/surface.ts';
@@ -35,6 +36,8 @@ import { lifecycle } from '../../src/suite/lifecycle.ts';
 import { adminSweep, shortcodeRender } from '../../src/suite/rendered-surface.ts';
 
 const PLUGIN = 'wpj-fixture';
+/** The ONE site these proofs may mutate. They uninstall a plugin and delete a cron event. */
+const TARGET = 'wpjtest';
 const cfg = loadConfig(process.env);
 const agent = createAgentClient(cfg.baseUrl, cfg.secret);
 const execFileAsync = promisify(execFile);
@@ -77,6 +80,12 @@ test.beforeAll(async () => {
   test.skip(WP_CLI.length === 0, 'set WPJ_WP_CLI to a wp-cli invocation for the target site');
   test.setTimeout(240_000);
 
+  // Structural rather than conventional: these proofs uninstall a plugin and delete a cron
+  // event, and only wpjtest may be mutated. Trusting whatever WPJ_WP_CLI happens to name would
+  // let one mistyped environment variable run all of that against a real site.
+  expect(WP_CLI, `WPJ_WP_CLI must target ${TARGET}`).toContain(TARGET);
+  expect(cfg.baseUrl, `WPJ_BASE_URL must target ${TARGET}`).toContain(TARGET);
+
   // Start from a site the fixture has never been activated on (R7a): uninstall removes the
   // option, table and user meta, and the cron event is deleted by hand because the fixture's
   // uninstall.php deliberately leaves it behind. Without this the fixture's activation state is
@@ -118,6 +127,8 @@ test('the delta is the fixture’s documented surface, so the sweep below has re
     'wpj-fixture-container-home',
     'wpj-fixture-file-child',
     'wpj-fixture-options',
+    'wpj-fixture-served',
+    'wpj-fixture-served-child',
     'wpj-fixture-settings',
     'wpj-fixture/wpj-fixture.php',
   ]);
@@ -160,6 +171,28 @@ test('a WRONG expectation goes red, so the six green sweeps above mean something
   expect(result.findings, detail(result)).toContainEqual(
     expect.objectContaining({ kind: 'response', status: 403 }),
   );
+});
+
+test('a sweep whose login token was REFUSED goes red, not green (R54)', async () => {
+  // The false green this guard exists for, and the reason a 12/12 green run could not catch it.
+  // wpj_consume_login returned SILENTLY on a refused token; WordPress then rendered the ordinary
+  // home page at the token URL with HTTP 200 — no login page, no 5xx, nothing for a classifier
+  // to report. The sweep ran as an ANONYMOUS visitor, and a logged-out visitor's login redirect
+  // satisfies every denial the subscriber sweep expects. It reported `pass` having asserted
+  // nothing about permissions at all. Only the administrator sweep would have gone red.
+  const sabotaged: AgentClient = {
+    ...agent,
+    mintLogin: async (userId: number) => {
+      const { url } = await agent.mintLogin(userId);
+      // Well-formed but never minted: 32 hex characters the agent has no transient for.
+      return { url: url.replace(/wpj_login=[^&]*/, `wpj_login=${'0'.repeat(32)}`) };
+    },
+  };
+
+  const result = await adminSweep(PLUGIN, delta, Actor.SUBSCRIBER).run(browser, cfg, sabotaged);
+
+  expect(outcomeOf(result), detail(result)).toBe('fail');
+  expect(JSON.stringify(result.findings)).toContain('could not authenticate as subscriber');
 });
 
 test('a container menu’s projected URL is a screen that answers, not a 404 (R28)', async () => {
