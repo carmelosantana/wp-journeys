@@ -11,7 +11,7 @@ const empty: Snapshot = { options: ['siteurl'], tables: [], cron: [], userMeta: 
 function baselineWith(over: Partial<Baseline> = {}): Baseline {
   return {
     surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
-    snapshot: empty, logNoise: [], bodyNoise: [], ...over,
+    snapshot: empty, logNoise: [], bodyNoise: [], activeAtStart: false, ...over,
   };
 }
 
@@ -48,5 +48,35 @@ describe('lifecycle: the plugin must really be gone (R79)', () => {
 
     expect(outcomeOf(result)).toBe('fail');
     expect(JSON.stringify(result.findings)).toContain('could not say whether acme is still active');
+  });
+});
+
+describe('lifecycle: what its orphan check can see (R75)', () => {
+  const gone: Snapshot = { ...empty, pluginActive: false };
+
+  it('is a visible SKIP when the plugin was already active at the baseline', async () => {
+    const { result } = await runLifecycle(baselineWith({ activeAtStart: true }), gone);
+
+    expect(outcomeOf(result)).toBe('skip');
+    expect(result.skipReason).toMatch(/acme was already active when the baseline was taken/);
+    expect(result.skipReason).toMatch(/leftovers are invisible/);
+  });
+
+  it('stays RED when it finds orphans anyway, active at the baseline or not', async () => {
+    const { result } = await runLifecycle(
+      baselineWith({ activeAtStart: true }), { ...gone, options: [...empty.options, 'acme_version'] },
+    );
+
+    expect(outcomeOf(result)).toBe('fail');
+    expect(JSON.stringify(result.findings)).toContain('options=acme_version');
+  });
+
+  it('may pass when the plugin was inactive at the baseline, but states the precondition it rests on', async () => {
+    const { result } = await runLifecycle(baselineWith({ activeAtStart: false }), gone);
+
+    expect(outcomeOf(result)).toBe('pass');
+    expect(result.notes).toEqual([
+      'sound only if acme was never activated on this site before this run: state an earlier activation left behind is already in the baseline',
+    ]);
   });
 });

@@ -111,9 +111,11 @@ describe('captureBaseline', () => {
   it('reads the site with the plugin under test deactivated, and turns it back on after', async () => {
     const { agent, sequence, fetchImpl, deactivate, activate } = harness();
 
-    await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(sequence).toEqual([
+      // R75: whether the plugin was ACTIVE is read before the deactivate, which erases it.
+      'status("acme")',
       'deactivate',
       // R36: the runner's own users must already exist when the snapshot is taken.
       'ensureActor("subscriber")',
@@ -135,6 +137,30 @@ describe('captureBaseline', () => {
     ]);
   });
 
+  describe('whether the plugin was active when the baseline was taken (R75)', () => {
+    it('records an active plugin: whatever its activation created predates the baseline', async () => {
+      const { agent, fetchImpl, deactivate, activate } = harness({
+        agent: { status: async (plugin?: string) => ({ ...STATUS, ...(plugin ? { pluginActive: true } : {}) }) },
+      });
+
+      expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl)).activeAtStart).toBe(true);
+    });
+
+    it('records an inactive plugin', async () => {
+      const { agent, fetchImpl, deactivate, activate } = harness({
+        agent: { status: async (plugin?: string) => ({ ...STATUS, ...(plugin ? { pluginActive: false } : {}) }) },
+      });
+
+      expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl)).activeAtStart).toBe(false);
+    });
+
+    it('treats an agent that cannot say as ACTIVE — unknown must never earn a pass', async () => {
+      const { agent, fetchImpl, deactivate, activate } = harness();
+
+      expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl)).activeAtStart).toBe(true);
+    });
+  });
+
   it('provisions every user-backed actor before the snapshot, and never the anonymous one', async () => {
     // ensureActor stamps `wpj_actor` user meta and the snapshot reports user-meta KEY NAMES, so
     // a baseline taken before the actors exist sees `wpj_actor` appear afterwards and reports it
@@ -142,7 +168,7 @@ describe('captureBaseline', () => {
     // Asking for an anonymous user is refused by the agent: anonymous has no user at all.
     const { agent, sequence, fetchImpl, deactivate, activate } = harness();
 
-    await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(sequence.filter((step) => step.startsWith('ensureActor'))).toEqual([
       'ensureActor("subscriber")', 'ensureActor("contributor")', 'ensureActor("author")',
@@ -154,7 +180,7 @@ describe('captureBaseline', () => {
   it('projects the raw registries, so the baseline is a Surface and not a dump', async () => {
     const { agent, fetchImpl, deactivate, activate } = harness();
 
-    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(baseline.surface.screens).toEqual([
       { slug: 'options-general.php', url: '/wp-admin/options-general.php', capability: 'manage_options', title: 'Settings', parent: null },
@@ -174,7 +200,7 @@ describe('captureBaseline', () => {
       ],
     });
 
-    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(baseline.logNoise).toEqual([NOISE_TEXT]);
   });
@@ -188,7 +214,7 @@ describe('captureBaseline', () => {
       windows: [[NOISE_LINE, ONE_OFF_LINE], [NOISE_LINE], [], []],
     });
 
-    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(baseline.logNoise).toEqual([NOISE_TEXT]);
     expect(baseline.logNoise).not.toContain(ONE_OFF_TEXT);
@@ -203,7 +229,7 @@ describe('captureBaseline', () => {
       windows: [[], [], [RENDER_LINE], [RENDER_LINE]],
     });
 
-    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(baseline.logNoise).toEqual([RENDER_TEXT]);
     expect(sequence.filter((step) => step.startsWith('GET '))).toEqual([
@@ -216,7 +242,7 @@ describe('captureBaseline', () => {
       windows: [[], [], [RENDER_LINE], []],
     });
 
-    expect((await captureBaseline(agent, CFG, deactivate, activate, fetchImpl)).logNoise).toEqual([]);
+    expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl)).logNoise).toEqual([]);
   });
 
   it('records a diagnostic PRINTED into the body as per-request noise too (R60)', async () => {
@@ -228,7 +254,7 @@ describe('captureBaseline', () => {
       bodies: [BODY_WARNING, BODY_WARNING],
     });
 
-    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(baseline.bodyNoise).toHaveLength(1);
   });
@@ -241,7 +267,7 @@ describe('captureBaseline', () => {
       bodies: [BODY_WARNING, CLEAN_BODY],
     });
 
-    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(baseline.bodyNoise).toEqual([]);
   });
@@ -257,7 +283,7 @@ describe('captureBaseline', () => {
       + '</body></html>';
     const { agent, fetchImpl, deactivate, activate } = harness({ bodies: [both, both] });
 
-    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(baseline.bodyNoise).toHaveLength(2);
   });
@@ -272,7 +298,7 @@ describe('captureBaseline', () => {
       },
     });
 
-    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(baseline.logNoise).toEqual([]);
     expect(baseline.bodyNoise).toHaveLength(1);
@@ -286,7 +312,7 @@ describe('captureBaseline', () => {
       },
     });
 
-    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
 
     expect(baseline.logNoise).toEqual([]);
   });
@@ -302,9 +328,9 @@ describe('captureBaseline', () => {
       throw new Error('wp-cli exited 1');
     };
 
-    await expect(captureBaseline(agent, CFG, deactivate, activate, fetchImpl))
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
       .rejects.toThrow('wp-cli exited 1');
-    expect(sequence).toEqual(['deactivate', 'activate']);
+    expect(sequence).toEqual(['status("acme")', 'deactivate', 'activate']);
   });
 
   it('reactivates the plugin even when the read fails, and still reports the failure', async () => {
@@ -312,7 +338,7 @@ describe('captureBaseline', () => {
       agent: { snapshot: async () => { throw new Error('agent unreachable'); } },
     });
 
-    await expect(captureBaseline(agent, CFG, deactivate, activate, fetchImpl))
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
       .rejects.toThrow('agent unreachable');
     expect(sequence.at(-1)).toBe('activate');
   });
@@ -325,7 +351,7 @@ describe('captureBaseline', () => {
     });
     const activate = async () => { throw new Error('wp-cli could not reactivate'); };
 
-    await expect(captureBaseline(agent, CFG, deactivate, activate, fetchImpl))
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
       .rejects.toThrow(/agent unreachable[\s\S]*wp-cli could not reactivate/);
   });
 });
@@ -343,7 +369,7 @@ describe('withoutBaselineNoise', () => {
     const { agent, fetchImpl, deactivate, activate } = harness({
       bodies: [BODY_WARNING, BODY_WARNING],
     });
-    return captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+    return captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
   }
 
   it('subtracts the SAME body diagnostic seen at a DIFFERENT url than the baseline probed (R60)', async () => {

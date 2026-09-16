@@ -64,12 +64,17 @@ function wpj_agent_dispatch($request) {
     $action = (string) $request->get_param('action');
     switch ($action) {
         case 'status':
-            return array(
+            $status = array(
                 'ok' => true,
                 'wp' => get_bloginfo('version'),
                 'php' => PHP_VERSION,
                 'debugLog' => defined('WP_DEBUG_LOG') && WP_DEBUG_LOG,
             );
+            $plugin = (string) wpj_agent_arg($request, 'plugin', '');
+            if ($plugin !== '') {
+                $status['pluginActive'] = wpj_plugin_slug_active($plugin, get_option('active_plugins'));
+            }
+            return $status;
         case 'snapshot':
             return wpj_snapshot((string) wpj_agent_arg($request, 'plugin', ''));
         case 'logDelta':

@@ -35,8 +35,8 @@ export function lifecycle(plugin: string, baseline: Baseline, uninstall: () => P
     name,
     actor: Actor.ADMINISTRATOR,
     surface: 'admin',
-    run: (browser, cfg, agent: AgentClient) =>
-      runAsActor(browser, cfg, agent, name, Actor.ADMINISTRATOR, 'admin', async (page, sentinel) => {
+    run: async (browser, cfg, agent: AgentClient) => {
+      const result = await runAsActor(browser, cfg, agent, name, Actor.ADMINISTRATOR, 'admin', async (page, sentinel, note) => {
         // Touch the dashboard while active: an activation fatal usually shows here first.
         await sentinel.visit(page, '/wp-admin/');
 
@@ -67,7 +67,22 @@ export function lifecycle(plugin: string, baseline: Baseline, uninstall: () => P
               `userMeta=${orphans.userMeta.join(', ') || 'none'}`,
           );
         }
+        if (!baseline.activeAtStart) {
+          note(`sound only if ${plugin} was never activated on this site before this run: state an earlier activation left behind is already in the baseline`);
+        }
         return 0;
-      }),
+      });
+      // R75. A baseline taken with the plugin ACTIVE already contains whatever its activation
+      // created, which is exactly what an uninstall routine must remove, so a clean diff here
+      // proves nothing. A skip, never an ok — and orphans it found anyway still fail, because a
+      // finding wins over a skip in outcomeOf.
+      if (!baseline.activeAtStart) return result;
+      return {
+        ...result,
+        skipped: true,
+        skipReason: `${plugin} was already active when the baseline was taken, so state its activation created `
+          + 'predates the baseline and its leftovers are invisible — run on a site where it was never activated',
+      };
+    },
   };
 }

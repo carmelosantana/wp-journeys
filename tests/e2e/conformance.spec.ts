@@ -103,6 +103,7 @@ test.beforeAll(async () => {
   baseline = await captureBaseline(
     agent,
     cfg,
+    PLUGIN,
     () => wpTolerant('plugin', 'deactivate', PLUGIN),
     () => wp('plugin', 'activate', PLUGIN),
   );

@@ -114,7 +114,7 @@ async function main(): Promise<number> {
   // No-op plugin toggles: the subject of this proof is the canary, an mu-plugin, so there is no
   // plugin under test to deactivate. Passing no-ops keeps the proof from mutating any plugin's
   // activation state, and the baseline still measures the log and body noise it needs.
-  const baseline = await captureBaseline(agent, cfg, async () => {}, async () => {});
+  const baseline = await captureBaseline(agent, cfg, 'wpj-canary', async () => {}, async () => {});
   console.log(`baseline captured with the canary DISARMED — logNoise=${baseline.logNoise.length}, bodyNoise=${baseline.bodyNoise.length}`);
   if (baseline.bodyNoise.some((key) => EXPECTED.test(key))) {
     failures.push('the canary\'s diagnostic is in the baseline noise — it was armed too early, and the proof is void');

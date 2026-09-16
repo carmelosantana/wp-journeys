@@ -140,6 +140,7 @@ describe('coreSuite', () => {
   const baseline = {
     surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
     snapshot: { options: [], tables: [], cron: [], userMeta: [] },
+  activeAtStart: false,
     logNoise: [],
     bodyNoise: [],
   };

@@ -240,7 +240,13 @@ function usage(reason: string): void {
       '\nA completed run UNINSTALLS the plugin under test. The last journey deactivates it and\n' +
       'runs its uninstall routine, so its options, tables, cron events and user meta are really\n' +
       'deleted and it is left inactive; only the plugin FILES are kept. It also creates six\n' +
-      'WordPress users. Point this at a scratch site, never at anything you care about.\n',
+      'WordPress users. Point this at a scratch site, never at anything you care about.\n' +
+      '\nThe orphan check is only sound on a site where the plugin has never been activated:\n' +
+      'whatever an earlier activation created is already in the baseline and cannot be seen.\n' +
+      'If the plugin is active when the run starts, the lifecycle row is a skip, not a pass.\n' +
+      'Mount it INACTIVE on a fresh site (or remove its state first). `wph mount` is not such a\n' +
+      'workflow on its own: it activates the plugin it mounts — deactivate it and clear its\n' +
+      'state before the first run.\n',
   );
 }
 
@@ -279,7 +285,7 @@ export async function main(
 
   // The baseline owns the deactivate/activate pair: everything attributable to the plugin is a
   // delta against the site WITHOUT it, and that ordering is a guarantee rather than a habit.
-  const baseline = await captureBaseline(agent, cfg, shell(commands.deactivate), shell(commands.activate));
+  const baseline = await captureBaseline(agent, cfg, plugin, shell(commands.deactivate), shell(commands.activate));
 
   // conformanceSurface, NOT surfaceDelta: the screens are the delta, but the capability map must
   // come from the site as it IS with the plugin active. A raw delta reports only the caps the

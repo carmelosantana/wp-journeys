@@ -16,6 +16,8 @@ export interface AgentStatus {
   wp: string;
   php: string;
   debugLog: boolean;
+  /** Present only when the status was asked about a plugin: whether it is in active_plugins. */
+  pluginActive?: boolean;
 }
 
 /**
@@ -32,7 +34,7 @@ export interface LogDelta {
 
 /** The agent's callable surface. Later tasks widen this interface. */
 export interface AgentClient {
-  status(): Promise<AgentStatus>;
+  status(plugin?: string): Promise<AgentStatus>;
   discover(): Promise<RawRegistries>;
   /**
    * Name-only state. Given the plugin under test's slug, it also says whether that plugin is
@@ -134,7 +136,7 @@ export function createAgentClient(
   }
 
   return {
-    status: () => call<AgentStatus>('status'),
+    status: (plugin?: string) => call<AgentStatus>('status', plugin === undefined ? {} : { plugin }),
     discover: () => post<RawRegistries>(discoverEndpoint, {}, 'discover'),
     snapshot: (plugin?: string) => call<Snapshot>('snapshot', plugin === undefined ? {} : { plugin }),
     logDelta: async (offset: number | 'end') => {

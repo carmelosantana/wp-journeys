@@ -40,6 +40,12 @@ export interface Baseline {
    * `/wp-admin/` and the false red would survive everywhere but the home page.
    */
   bodyNoise: string[];
+  /**
+   * Whether the plugin under test was ACTIVE when the baseline was taken (R75). If it was,
+   * whatever its activation created is already in `snapshot`, so the orphan check cannot see
+   * it. An agent that cannot say is read as `true`: unknown must never earn a pass.
+   */
+  activeAtStart: boolean;
 }
 
 /** One shape of ordinary WordPress request, used to see what it emits. */
@@ -167,6 +173,7 @@ async function measureNoise(
 
 /**
  * @param cfg        the target site; only its base URL is used, to drive a front-end render
+ * @param plugin     the plugin under test's slug, asked about BEFORE the deactivate erases the answer
  * @param deactivate turn the plugin under test OFF (caller supplies; usually a wp-cli call)
  * @param activate   turn it back ON
  * @param fetchImpl  injectable so the probe is testable without a network
@@ -174,6 +181,7 @@ async function measureNoise(
 export async function captureBaseline(
   agent: AgentClient,
   cfg: Config,
+  plugin: string,
   deactivate: () => Promise<void>,
   activate: () => Promise<void>,
   fetchImpl: typeof fetch = fetch,
@@ -204,12 +212,14 @@ export async function captureBaseline(
     // shutdown notice, a deactivation-hook warning, a timeout after the write landed. With this
     // call outside, the site keeps the plugin OFF and every later journey drives a site the
     // plugin is not even on, and passes.
+    // R75: read BEFORE the deactivate, which makes every plugin look inactive.
+    const activeAtStart = (await agent.status(plugin)).pluginActive !== false;
     await deactivate();
     await provisionActors(agent);
     const surface = projectSurface(await agent.discover());
     const snapshot = await agent.snapshot();
     const noise = await measureNoise(agent, probes);
-    return { surface, snapshot, logNoise: noise.log, bodyNoise: noise.body };
+    return { surface, snapshot, logNoise: noise.log, bodyNoise: noise.body, activeAtStart };
   } catch (error) {
     failure = error;
     throw error;
@@ -245,7 +255,9 @@ export async function captureBaseline(
  * it is not attributable to the plugin, which is the same rule the surface and snapshot deltas
  * follow — and the two-sample rule above is what keeps a one-off from ever entering either set.
  */
-export function withoutBaselineNoise(findings: readonly Finding[], baseline: Baseline): Finding[] {
+export function withoutBaselineNoise(
+  findings: readonly Finding[], baseline: Pick<Baseline, 'logNoise' | 'bodyNoise'>,
+): Finding[] {
   const logNoise = new Set(baseline.logNoise);
   const bodyNoise = new Set(baseline.bodyNoise);
   return findings.filter((finding) => {

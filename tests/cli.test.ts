@@ -18,6 +18,7 @@ const NOISE_TEXT = 'PHP Deprecated: Creation of dynamic property Acme::$x is dep
 const BASELINE: Baseline = {
   surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
   snapshot: { options: [], tables: [], cron: [], userMeta: [] },
+  activeAtStart: false,
   logNoise: [NOISE_TEXT],
   bodyNoise: [],
 };
@@ -122,6 +123,13 @@ describe('the wpj entry point', () => {
 
     expect(stderr).toMatch(/uninstall/i);
     expect(stderr).toMatch(/scratch|disposable|throwaway/i);
+  });
+
+  it('explains the fresh-site precondition of the orphan check, and why a mount that activates is not one (R75)', () => {
+    const { stderr } = runCli([]);
+
+    expect(stderr).toMatch(/never been activated/);
+    expect(stderr).toMatch(/wph mount.*activates/s);
   });
 
   it('names the environment variables without ever carrying a value for the secret', () => {
