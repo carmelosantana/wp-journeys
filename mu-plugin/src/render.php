@@ -29,3 +29,21 @@ function wpj_render_payload_allowed($raw) {
     }
     return preg_match('/\A\[[A-Za-z0-9_\-]+\]\z/', $raw) === 1;
 }
+
+/**
+ * The render door's output: what do_shortcode() returned, inside the marker the runner proves
+ * the endpoint ran by, which also says whether the tag EXPANDED.
+ *
+ * Only this side can say that for certain. WordPress returns an unregistered shortcode
+ * unchanged, but a registered one may quote its own tag — Alpaca Bot's `[alpacabot_agent]`
+ * answers "[alpacabot_agent] needs a url attribute." — so the runner, looking only at the text,
+ * called a perfectly good expansion verbatim. An unchanged string is the definition.
+ *
+ * @param string $raw the payload, already through wpj_render_payload_allowed()
+ * @param string $out what do_shortcode($raw) returned
+ * @return string
+ */
+function wpj_render_wrap($raw, $out) {
+    $expanded = $out !== $raw ? '1' : '0';
+    return '<div data-wpj-render="1" data-wpj-expanded="' . $expanded . '">' . $out . '</div>';
+}

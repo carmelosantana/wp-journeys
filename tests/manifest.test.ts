@@ -512,7 +512,7 @@ describe('interpret', () => {
     it('renders through the agent and passes when the marker is present and the tag expanded', async () => {
       const { page, run } = arrange(journey);
       page.navigations = [ADMIN_LANDING, CONTROL];
-      page.body = '<div data-wpj-render="1"><p>expanded</p></div>';
+      page.body = '<div data-wpj-render="1" data-wpj-expanded="1"><p>expanded</p></div>';
 
       const result = await run();
 
@@ -536,7 +536,7 @@ describe('interpret', () => {
     it('fails when the tag came back verbatim — it never expanded', async () => {
       const { page, run } = arrange(journey);
       page.navigations = [ADMIN_LANDING, CONTROL];
-      page.body = '<div data-wpj-render="1">[acme]</div>';
+      page.body = '<div data-wpj-render="1" data-wpj-expanded="0">[acme]</div>';
 
       const result = await run();
 

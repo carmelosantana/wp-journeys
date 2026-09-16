@@ -154,7 +154,7 @@ function wpj_agent_render_endpoint() {
     if (!wpj_render_payload_allowed($raw)) {
         return;
     }
-    echo '<div data-wpj-render="1">' . do_shortcode($raw) . '</div>';
+    echo wpj_render_wrap($raw, do_shortcode($raw));
     exit;
 }
 

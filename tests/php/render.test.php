@@ -32,4 +32,10 @@ wpj_assert('an empty tag is refused', false, wpj_render_payload_allowed('[]'));
 wpj_assert('two shortcodes at once are refused', false, wpj_render_payload_allowed('[acme][other]'));
 wpj_assert('a non-string payload is refused rather than cast into a warning', false, wpj_render_payload_allowed(array()));
 
+// The marker says whether do_shortcode() changed its input. Only the agent knows that for
+// certain: a shortcode's own output may quote its tag, so the runner cannot tell from the text.
+wpj_assert('an expanded tag is marked expanded', '<div data-wpj-render="1" data-wpj-expanded="1"><p>hi</p></div>', wpj_render_wrap('[acme]', '<p>hi</p>'));
+wpj_assert('output that quotes its own tag is still expanded', '<div data-wpj-render="1" data-wpj-expanded="1">[acme] needs a url.</div>', wpj_render_wrap('[acme]', '[acme] needs a url.'));
+wpj_assert('an unchanged tag is marked not expanded', '<div data-wpj-render="1" data-wpj-expanded="0">[acme]</div>', wpj_render_wrap('[acme]', '[acme]'));
+
 wpj_assert_exit();
