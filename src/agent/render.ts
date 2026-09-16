@@ -50,30 +50,43 @@ export function blockRenderUrl(name: string): string {
   return `/?wpj_render_block=${encodeURIComponent(name)}`;
 }
 
+/** What one block render proved: a defect, or registration plus whether the block is dynamic. */
+export interface BlockRenderVerdict {
+  defect: string | null;
+  /** Whether the block has a server render. Meaningless when `defect` is set. */
+  dynamic: boolean;
+}
+
 /**
- * Why a render of the block `name` proved nothing, or `null` when it rendered.
+ * What a render of the block `name` proved.
  *
- * The same two-part proof as a shortcode, adapted to what `render_block` can say: the marker
- * proves the endpoint ran, and `data-wpj-registered` proves the block exists — `render_block`
- * answers an unregistered name with an empty string, which would otherwise read as a clean
- * render. A STATIC block passes on registration alone: its markup lives in post content, so
- * the server has nothing to render for it, and the journey asserts only that the render path
- * (the `render_block` filters, block supports) ran without a diagnostic.
+ * The marker proves the endpoint ran, and `data-wpj-registered` proves the block exists —
+ * `render_block` answers an unregistered name with an empty string, which would otherwise read as
+ * a clean render. `data-wpj-dynamic` says whether there was a server render to exercise at all
+ * (R78): a STATIC block's frontend output is its saved post content, which the door cannot
+ * produce, so for it registration is all that was checked, and the caller must say so.
  */
-export function blockRenderDefect(html: string, name: string): string | null {
+export function blockRenderVerdict(html: string, name: string): BlockRenderVerdict {
+  const refuse = (defect: string): BlockRenderVerdict => ({ defect, dynamic: false });
   const marker = /<div data-wpj-render-block="1"([^>]*)>/.exec(html);
   if (!marker) {
-    return `rendering the block ${name} produced no wp-journeys render marker — the agent's block `
-      + 'endpoint did not run, so nothing about this block was actually asserted';
+    return refuse(`rendering the block ${name} produced no wp-journeys render marker — the agent's block `
+      + 'endpoint did not run, so nothing about this block was actually asserted');
   }
-  const registered = /\sdata-wpj-registered="([01])"/.exec(marker[1] ?? '')?.[1];
+  const attributes = marker[1] ?? '';
+  const registered = /\sdata-wpj-registered="([01])"/.exec(attributes)?.[1];
   if (registered === undefined) {
-    return `the render marker does not say whether ${name} is registered — the wp-journeys agent on `
-      + 'the site is older than this runner; remount it';
+    return refuse(`the render marker does not say whether ${name} is registered — the wp-journeys agent on `
+      + 'the site is older than this runner; remount it');
   }
   if (registered === '0') {
-    return `the block ${name} is not registered at render time — render_block answers an unknown block `
-      + 'with nothing, so it was discovered but cannot be rendered';
+    return refuse(`the block ${name} is not registered at render time — render_block answers an unknown block `
+      + 'with nothing, so it was discovered but cannot be rendered');
   }
-  return null;
+  const dynamic = /\sdata-wpj-dynamic="([01])"/.exec(attributes)?.[1];
+  if (dynamic === undefined) {
+    return refuse(`the render marker does not say whether ${name} is dynamic — the wp-journeys agent on `
+      + 'the site is older than this runner; remount it');
+  }
+  return { defect: null, dynamic: dynamic === '1' };
 }

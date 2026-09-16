@@ -215,32 +215,37 @@ test('a container menu’s projected URL is a screen that answers, not a 404 (R2
   expect(outcomeOf(result), detail(result)).toBe('pass');
 });
 
-test('every shortcode the plugin added renders through the front end', async () => {
-  const result = await shortcodeRender(PLUGIN, delta).run(browser, cfg, agent);
+for (const actor of [Actor.ADMINISTRATOR, Actor.ANONYMOUS]) {
+  test(`every shortcode the plugin added renders through the front end, as ${actor} (R77)`, async () => {
+    const result = await shortcodeRender(PLUGIN, delta, actor).run(browser, cfg, agent);
 
-  expect(outcomeOf(result), detail(result)).toBe('pass');
-});
+    expect(outcomeOf(result), detail(result)).toBe('pass');
+  });
+}
 
 test('a shortcode that never registered goes red, rather than passing on a 200 (R5)', async () => {
   // The hazard the marker exists for: a tag that does not expand still comes back HTTP 200,
   // and WordPress returns an unregistered shortcode verbatim. Asserting only "the page loaded"
   // would pass having rendered nothing at all.
-  const result = await shortcodeRender(PLUGIN, { ...delta, shortcodes: ['wpj_not_a_shortcode'] })
+  const result = await shortcodeRender(PLUGIN, { ...delta, shortcodes: ['wpj_not_a_shortcode'] }, Actor.ADMINISTRATOR)
     .run(browser, cfg, agent);
 
   expect(outcomeOf(result), detail(result)).toBe('fail');
   expect(JSON.stringify(result.findings)).toContain('came back verbatim');
 });
 
-test('every block the plugin added renders through the front end (R57)', async () => {
-  expect(delta.blocks).toEqual(['wpj-fixture/hello']);
-  const result = await blockRender(PLUGIN, delta).run(browser, cfg, agent);
+for (const actor of [Actor.ADMINISTRATOR, Actor.ANONYMOUS]) {
+  test(`every block the plugin added renders through the front end, as ${actor} (R57, R77)`, async () => {
+    expect(delta.blocks).toEqual(['wpj-fixture/hello']);
+    const result = await blockRender(PLUGIN, delta, actor).run(browser, cfg, agent);
 
-  expect(outcomeOf(result), detail(result)).toBe('pass');
-});
+    // The fixture's block is dynamic, so this is a pass, not the all-static skip (R78).
+    expect(outcomeOf(result), detail(result)).toBe('pass');
+  });
+}
 
 test('a block that is not registered goes red, rather than rendering "cleanly" as nothing (R57)', async () => {
-  const result = await blockRender(PLUGIN, { ...delta, blocks: ['wpj-fixture/not-a-block'] }).run(browser, cfg, agent);
+  const result = await blockRender(PLUGIN, { ...delta, blocks: ['wpj-fixture/not-a-block'] }, Actor.ADMINISTRATOR).run(browser, cfg, agent);
 
   expect(outcomeOf(result), detail(result)).toBe('fail');
   expect(JSON.stringify(result.findings)).toContain('wpj-fixture/not-a-block is not registered');

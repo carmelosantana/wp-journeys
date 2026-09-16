@@ -1,5 +1,5 @@
 /** The built-in conformance suite: the SDK's first consumer. */
-import { ALL_ACTORS } from '../actors/roles.ts';
+import { ALL_ACTORS, Actor } from '../actors/roles.ts';
 import { surfaceDelta } from '../discovery/surface.ts';
 import type { Surface } from '../discovery/types.ts';
 import { register } from '../journeys/index.ts';
@@ -28,6 +28,9 @@ export { accessMatrix } from './admin-access-matrix.ts';
  * @param before the surface with the plugin under test DEACTIVATED (`baseline.surface`)
  * @param after  the surface with it active
  */
+/** Who renders the discovered blocks and shortcodes (R77). */
+const RENDER_ACTORS = [Actor.ADMINISTRATOR, Actor.ANONYMOUS] as const;
+
 export function conformanceSurface(before: Surface, after: Surface): Surface {
   return { ...surfaceDelta(before, after), caps: after.caps };
 }
@@ -47,8 +50,9 @@ export function coreSuite(
   return register(
     frontendRenders,
     ...ALL_ACTORS.map((actor) => adminSweep(plugin, delta, actor)),
-    shortcodeRender(plugin, delta),
-    blockRender(plugin, delta),
+    // R77: logged in AND anonymously, as the spec's core-suite step says.
+    ...RENDER_ACTORS.map((actor) => shortcodeRender(plugin, delta, actor)),
+    ...RENDER_ACTORS.map((actor) => blockRender(plugin, delta, actor)),
     ...authored,
     // Uninstall runs last: it removes the plugin the other journeys need.
     lifecycle(plugin, baseline, uninstall),

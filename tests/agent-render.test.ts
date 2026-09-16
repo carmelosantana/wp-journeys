@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { blockRenderDefect, blockRenderUrl, shortcodeRenderDefect, shortcodeRenderUrl } from '../src/agent/render.ts';
+import { blockRenderVerdict, blockRenderUrl, shortcodeRenderDefect, shortcodeRenderUrl } from '../src/agent/render.ts';
 
 /** The agent's marker as Chromium serialises it, around what do_shortcode() returned. */
 const rendered = (expanded: '0' | '1', inner: string) =>
@@ -53,30 +53,35 @@ describe('blockRenderUrl', () => {
   });
 });
 
-describe('blockRenderDefect (R57)', () => {
-  it('passes a registered dynamic block the server rendered', () => {
-    expect(blockRenderDefect(block('1', '1', '<p>hello</p>'), 'acme/hello')).toBeNull();
+describe('blockRenderVerdict (R57, R78)', () => {
+  it('passes a registered dynamic block the server rendered, and says it is dynamic', () => {
+    expect(blockRenderVerdict(block('1', '1', '<p>hello</p>'), 'acme/hello')).toEqual({ defect: null, dynamic: true });
   });
 
-  it('passes a registered static block: its markup lives in post content, so render_block had nothing to add', () => {
-    expect(blockRenderDefect(block('1', '0'), 'acme/static')).toBeNull();
+  it('passes a registered static block, and says it is static so the row can say what was not checked', () => {
+    expect(blockRenderVerdict(block('1', '0'), 'acme/static')).toEqual({ defect: null, dynamic: false });
   });
 
   it('fails a block the registry does not know — render_block answers an unknown one with nothing, not an error', () => {
-    expect(blockRenderDefect(block('0', '0'), 'acme/gone')).toMatch(/acme\/gone is not registered/);
+    expect(blockRenderVerdict(block('0', '0'), 'acme/gone').defect).toMatch(/acme\/gone is not registered/);
   });
 
   it('fails when the marker is absent — the endpoint never ran', () => {
-    expect(blockRenderDefect('<html><body>home</body></html>', 'acme/hello'))
+    expect(blockRenderVerdict('<html><body>home</body></html>', 'acme/hello').defect)
       .toMatch(/rendering the block acme\/hello produced no wp-journeys render marker/);
   });
 
   it('does not accept the SHORTCODE door\'s marker as proof a block rendered', () => {
-    expect(blockRenderDefect(rendered('1', '<p>x</p>'), 'acme/hello')).toMatch(/no wp-journeys render marker/);
+    expect(blockRenderVerdict(rendered('1', '<p>x</p>'), 'acme/hello').defect).toMatch(/no wp-journeys render marker/);
   });
 
   it('fails, rather than guessing, when the marker does not say whether the block is registered', () => {
-    expect(blockRenderDefect('<div data-wpj-render-block="1"></div>', 'acme/hello'))
+    expect(blockRenderVerdict('<div data-wpj-render-block="1"></div>', 'acme/hello').defect)
       .toMatch(/does not say whether acme\/hello is registered/);
+  });
+
+  it('fails, rather than guessing, when the marker does not say whether the block is dynamic', () => {
+    expect(blockRenderVerdict('<div data-wpj-render-block="1" data-wpj-registered="1"></div>', 'acme/hello').defect)
+      .toMatch(/does not say whether acme\/hello is dynamic/);
   });
 });

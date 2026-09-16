@@ -3,7 +3,7 @@
  * matrix; and render every shortcode and every block it added on the frontend.
  */
 import { Actor, isAnonymous } from '../actors/roles.ts';
-import { blockRenderDefect, blockRenderUrl, shortcodeRenderDefect, shortcodeRenderUrl } from '../agent/render.ts';
+import { blockRenderUrl, blockRenderVerdict, shortcodeRenderDefect, shortcodeRenderUrl } from '../agent/render.ts';
 import type { Surface } from '../discovery/types.ts';
 import type { Journey, JourneyResult, SurfaceAxis } from '../journeys/index.ts';
 import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
@@ -83,22 +83,24 @@ export function adminSweep(plugin: string, delta: Surface, actor: Actor): Journe
 }
 
 /**
- * Render every shortcode the plugin added, on the front end, as an administrator.
+ * Render every shortcode the plugin added, on the front end, as `actor`.
  *
- * The render itself is not the assertion (R5): `shortcodeRenderDefect` is what proves the
- * endpoint ran and the tag expanded.
+ * The core suite runs this as an administrator AND anonymously (R77, spec: "render every
+ * discovered block and shortcode on the frontend, anonymously and logged in"). The render itself
+ * is not the assertion (R5): `shortcodeRenderDefect` is what proves the endpoint ran and the tag
+ * expanded. It touches only the frontend, and says so in its surface.
  */
-export function shortcodeRender(plugin: string, delta: Surface): Journey {
-  const name = `shortcode-render:${plugin}`;
+export function shortcodeRender(plugin: string, delta: Surface, actor: Actor): Journey {
+  const name = `shortcode-render:${plugin}:${actor}`;
   return {
     name,
-    actor: Actor.ADMINISTRATOR,
-    surface: 'both',
+    actor,
+    surface: 'frontend',
     run: async (browser, cfg, agent) => {
       if (delta.shortcodes.length === 0) {
-        return skipped(name, Actor.ADMINISTRATOR, 'both', `${plugin} registered no shortcodes`);
+        return skipped(name, actor, 'frontend', `${plugin} registered no shortcodes`);
       }
-      return runAsActor(browser, cfg, agent, name, Actor.ADMINISTRATOR, 'both', async (page, sentinel) => {
+      return runAsActor(browser, cfg, agent, name, actor, 'frontend', async (page, sentinel) => {
         // Render through the front end so the shortcode runs in its real context.
         for (const tag of delta.shortcodes) {
           await sentinel.visit(page, shortcodeRenderUrl(tag));
@@ -112,29 +114,48 @@ export function shortcodeRender(plugin: string, delta: Surface): Journey {
 }
 
 /**
- * Render every block the plugin added, on the front end, as an administrator (R57).
+ * Render every block the plugin added, on the front end, as `actor` (R57, R77, R78).
  *
- * Symmetric with `shortcodeRender`: discovery has always listed blocks, and until this journey
- * no run exercised one — a whole discovered axis reported nothing and said so nowhere.
+ * Symmetric with `shortcodeRender`. What it can prove is narrower, and the row says so: the door
+ * exits before wp_head and wp_footer, so no frontend asset is exercised; and a STATIC block's
+ * frontend output is saved post content the door cannot produce, so for it only registration is
+ * checked. A row whose every block is static proved nothing about rendering, and is a skip.
  */
-export function blockRender(plugin: string, delta: Surface): Journey {
-  const name = `block-render:${plugin}`;
+export function blockRender(plugin: string, delta: Surface, actor: Actor): Journey {
+  const name = `block-render:${plugin}:${actor}`;
   return {
     name,
-    actor: Actor.ADMINISTRATOR,
-    surface: 'both',
+    actor,
+    surface: 'frontend',
     run: async (browser, cfg, agent) => {
       if (delta.blocks.length === 0) {
-        return skipped(name, Actor.ADMINISTRATOR, 'both', `${plugin} registered no blocks`);
+        return skipped(name, actor, 'frontend', `${plugin} registered no blocks`);
       }
-      return runAsActor(browser, cfg, agent, name, Actor.ADMINISTRATOR, 'both', async (page, sentinel) => {
+      let dynamicCount = 0;
+      const result = await runAsActor(browser, cfg, agent, name, actor, 'frontend', async (page, sentinel, note) => {
+        const statics: string[] = [];
         for (const block of delta.blocks) {
           await sentinel.visit(page, blockRenderUrl(block));
-          const defect = blockRenderDefect(await page.content(), block);
-          if (defect) throw new Error(defect);
+          const verdict = blockRenderVerdict(await page.content(), block);
+          if (verdict.defect) throw new Error(verdict.defect);
+          if (verdict.dynamic) dynamicCount += 1;
+          else statics.push(block);
+        }
+        if (dynamicCount > 0) {
+          note('the block render door exits before wp_head and wp_footer, so no block\'s frontend assets were exercised');
+        }
+        for (const block of statics) {
+          note(`${block} is static: its frontend output is saved post content, which the render door cannot produce — only its registration was checked`);
         }
         return 0;
       });
+      if (dynamicCount > 0 || result.findings.length > 0) return result;
+      // Every block was static and nothing went wrong: nothing about rendering was asserted.
+      return {
+        ...result,
+        skipped: true,
+        skipReason: `every block ${plugin} added is static, so there was no server render to exercise — only registration was checked`,
+      };
     },
   };
 }
