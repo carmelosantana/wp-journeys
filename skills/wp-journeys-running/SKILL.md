@@ -18,7 +18,7 @@ description: Use when running the wp-journeys conformance suite (`wpj run`, `wpj
 | Link these skills into `~/.claude/skills` | `wpj skills install` |
 | Fetch the browser, once | `npx playwright install chromium` |
 
-`wpj` means `node bin/wpj.js` run from a clone of wp-journeys (after `pnpm install` and `pnpm browser`). It is not distributed on npm.
+`wpj` means `node bin/wpj.js` run from a clone of wp-journeys on Node 22.18+ (after `pnpm install` and `pnpm browser`). It is not distributed on npm.
 
 | Variable | Meaning |
 |---|---|

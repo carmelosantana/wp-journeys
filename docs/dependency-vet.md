@@ -35,7 +35,7 @@ regardless; the pin makes the decision explicit rather than relying on the guard
 
 ### 2. `tsx` was DROPPED, not pinned — Node 22 makes it unnecessary
 
-Verified on this host (Node **v22.23.2**): a `.ts` entry point with a `.ts` import, a typed
+Verified on this host (Node **v22.23.2**; type stripping is unflagged from 22.18.0, so `engines` says `>=22.18`): a `.ts` entry point with a `.ts` import, a typed
 interface and an annotated const runs with **no flags and no loader**.
 
 ```

@@ -12,7 +12,7 @@ The module default-exports a `Journey`. The runner calls `run(browser, cfg, agen
 **It does not wrap your module in a sentinel or a login, so `runAsActor` is not optional.**
 
 ```ts
-// journeys/create-widget.ts. Node 22 runs this natively; type-only imports are erased.
+// journeys/create-widget.ts. Node 22.18+ runs this natively; type-only imports are erased.
 import type { Journey } from '<wp-journeys>/src/journeys/index.ts';
 import { CONTROL_SCREEN, runAsActor } from '<wp-journeys>/src/journeys/support.ts';
 

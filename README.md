@@ -9,14 +9,14 @@ the page, and `debug.log`. **The binding constraint: a lost or skipped signal is
 as ok.** A skip is its own outcome and is always shown. A signal the runner could not read
 counts as a failure, not a clean pass.
 
-Built with Playwright and TypeScript. Node 22 runs the TypeScript directly; there is no build
+Built with Playwright and TypeScript. Node 22.18+ runs the TypeScript directly; there is no build
 step.
 
 ## Requirements
 
 | Need | Notes |
 |---|---|
-| Node 22+ | Runs the `.ts` sources natively. |
+| Node 22.18+ | Runs the `.ts` sources natively; type stripping is unflagged from 22.18. |
 | pnpm | The lockfile is pnpm's (`pnpm install --frozen-lockfile`). |
 | A local WordPress | Only `localhost`, `127.0.0.1`, `[::1]`, `*.test` and `*.localhost` are accepted. [wp-harness](https://github.com/carmelosantana/wp-harness) is optional. |
 | wp-cli for that site | Used only to activate, deactivate and uninstall the plugin under test. |
@@ -75,7 +75,7 @@ On wp-harness, `scripts/scratch-site.sh` does all of this for the `wpjtest` site
 
 | Command | Does |
 |---|---|
-| `node bin/wpj.js run --plugin <slug>` | Runs the conformance suite and prints the summary. Exit 0 means every row is ok or skip. Exit 1 means a failure, zero journeys, or a fatal error. Exit 2 means bad arguments. |
+| `node bin/wpj.js run --plugin <slug>` | Runs the conformance suite and prints the summary. Exit 0 means every row is ok or skip. Exit 1 means a failure, zero journeys, or a fatal error. Exit 2 means bad arguments, or `WPJ_WP` is unset. |
 | `node bin/wpj.js mcp` | Serves the runner as MCP tools over stdio. |
 | `node bin/wpj.js skills install` | Links the two agent skills into `~/.claude/skills`. |
 

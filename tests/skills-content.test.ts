@@ -179,6 +179,8 @@ describe('README.md (R102)', { timeout: SPAWN_TIMEOUT_MS }, () => {
     const readme = await read(join(ROOT, 'README.md'));
     for (const tool of Object.keys(TOOLS)) expect(readme).toContain(`\`${tool}\``);
     for (const command of ['wpj run --plugin', 'wpj mcp', 'wpj skills install']) expect(readme).toContain(command);
+    // main() exits 2 for bad arguments AND for an unset WPJ_WP (R103).
+    expect(readme).toMatch(/Exit 2 means bad arguments, or `WPJ_WP` is unset/);
   });
 
   it('warns that the companion mu-plugin is dev-only, and ships the license it names', async () => {
@@ -187,5 +189,24 @@ describe('README.md (R102)', { timeout: SPAWN_TIMEOUT_MS }, () => {
     const license = await read(join(ROOT, 'LICENSE'));
     expect(license).toMatch(/^MIT License\n\nCopyright \(c\) 2026 Carmelo Santana\n/);
     expect(JSON.parse(await read(join(ROOT, 'package.json'))).license).toBe('MIT');
+  });
+});
+
+describe('the Node floor (R103)', () => {
+  const ROOT = join(skillsRoot(), '..');
+
+  it('is 22.18, where type stripping runs unflagged, in package.json and everywhere the docs state it', async () => {
+    expect(JSON.parse(await read(join(ROOT, 'package.json'))).engines).toEqual({ node: '>=22.18' });
+    const files = [join(ROOT, 'README.md'), ...await markdownOf(RUNNING), ...await markdownOf(AUTHORING)];
+    let stated = 0;
+    for (const file of files) {
+      const text = await read(file);
+      // Any "Node 22" must be the full floor.
+      for (const match of text.matchAll(/Node(?:\.js)? 22(\.\d+)?/g)) {
+        expect(match[1], `${file}: ${match[0]}`).toBe('.18');
+        stated += 1;
+      }
+    }
+    expect(stated).toBeGreaterThanOrEqual(3);
   });
 });
