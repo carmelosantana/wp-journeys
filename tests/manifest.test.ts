@@ -593,6 +593,18 @@ describe('interpret', () => {
       }
     });
 
+    it('wraps a throw from inside the module run() with the journey name and module path, keeping the cause (R68d)', async () => {
+      // Third-party code: without the wrap the operator gets a stack from a file they have to
+      // go and find, with neither the journey nor the module named.
+      const { run } = arrange({ name: 'boom', actor: 'editor', surface: 'admin', module: 'tests/fixtures/journeys/throws.ts' }, repo);
+
+      const error = await run().then(() => null, (thrown: unknown) => thrown as Error & { cause?: unknown });
+
+      expect(error?.message).toMatch(/^journey "boom": module "tests\/fixtures\/journeys\/throws\.ts" threw — module exploded/);
+      expect(error?.cause).toBeInstanceOf(Error);
+      expect((error?.cause as Error).message).toBe('module exploded');
+    });
+
     it('fails when the module default export is not a Journey', async () => {
       const { run } = arrange({ name: 'plain', actor: 'editor', surface: 'admin', module: 'tests/helpers/fakes.ts' }, repo);
 

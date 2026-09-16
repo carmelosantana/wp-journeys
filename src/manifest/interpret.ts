@@ -18,8 +18,10 @@
  *    check the discovered-surface journey uses (R5).
  *
  * Authentication is `runAsActor`'s, and a control visit to a screen the actor must be SERVED
- * precedes every step (R67), so a manifest denial for a logged-in actor cannot be satisfied by
- * an anonymous visitor: a refused, bounced or sessionless login fails before the first screen.
+ * opens every non-anonymous journey the INTERPRETER runs (R67), so a manifest denial for a
+ * logged-in actor cannot be satisfied by an anonymous visitor: a refused, bounced or
+ * sessionless login fails before the first screen. An escape-hatch module never reaches that
+ * path — it owns its whole run, and is responsible for its own control visit.
  */
 import { randomBytes } from 'node:crypto';
 import { isAbsolute, relative, resolve } from 'node:path';
@@ -68,9 +70,10 @@ async function loadModule(entry: ManifestJourney, module: string, pluginDir: str
  * The module's result, checked for shape and re-labelled with the MANIFEST's identity.
  *
  * The summary must list what the manifest named: a journey the author called `acme-custom`
- * would otherwise appear under whatever the module called itself. And a malformed result must
- * fail THIS journey here — unchecked, it reaches `outcomeOf`, which throws on a half-declared
- * skip and aborts the whole summary rather than one row.
+ * would otherwise appear under whatever the module called itself. And a malformed result is
+ * refused at this boundary, where the module can be named: left alone it would reach
+ * `outcomeOf` inside the CLI's per-journey guard and fail the same row, but as a contract
+ * error about a half-declared skip, with no word of which module produced it.
  */
 function asManifestResult(entry: ManifestJourney, module: string, raw: unknown): JourneyResult {
   const refuse = (why: string): never => {
@@ -151,7 +154,18 @@ function journeyFor(entry: ManifestJourney, pluginDir: string, nonce: () => stri
     run: async (browser, cfg, agent) => {
       if (entry.module !== undefined) {
         const loaded = await loadModule(entry, entry.module, pluginDir);
-        return asManifestResult(entry, entry.module, await loaded.run(browser, cfg, agent));
+        let raw: unknown;
+        try {
+          raw = await loaded.run(browser, cfg, agent);
+        } catch (error) {
+          // Third-party code. Unwrapped, the operator gets a stack from a file they have to go
+          // and find, with neither the journey nor the module named; the original stays as the
+          // cause so nothing is lost.
+          throw new Error(
+            `journey "${entry.name}": module "${entry.module}" threw — ${messageOf(error)}`, { cause: error },
+          );
+        }
+        return asManifestResult(entry, entry.module, raw);
       }
       return runAsActor(browser, cfg, agent, entry.name, entry.actor, entry.surface, async (page, sentinel) => {
         // The control visit (R67): one screen this actor MUST be served, before any step. A
