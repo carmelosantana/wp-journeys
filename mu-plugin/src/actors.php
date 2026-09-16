@@ -234,29 +234,52 @@ function wpj_mint_login($user_id) {
 }
 
 /**
+ * Refuse a minted login LOUDLY, with a status the runner's navigation classifier reports (R54).
+ *
+ * Never names the token, which would write a credential into the response body and any trace
+ * of it; the reason is about the token's STATE, not its value.
+ *
+ * @param string $why the reason, for a human reading the page
+ */
+function wpj_refuse_login($why) {
+    wp_die(
+        esc_html('wp-journeys: the minted login was refused — ' . $why),
+        'wp-journeys login refused',
+        array('response' => 403)
+    );
+}
+
+/**
  * Spend a minted token: authenticate the browser as that actor and redirect to wp-admin.
  *
- * Exits on success. Any doubt at all — a malformed, unknown, expired or already-spent token,
- * or a user that is no longer one of ours — returns silently and the request renders as
- * usual. The caller has already run the guard; the token is the only credential here,
- * because a browser navigation cannot carry the secret header.
+ * Exits either way. Any doubt at all — a malformed, unknown, expired or already-spent token,
+ * or a user that is no longer one of ours — refuses LOUDLY with a 403. The caller has already
+ * run the guard; the token is the only credential here, because a browser navigation cannot
+ * carry the secret header.
+ *
+ * It used to return SILENTLY, and that was the worst failure mode this project has (R54).
+ * WordPress then rendered the ordinary home page AT the token URL with HTTP 200 — not a login
+ * page and not a 5xx, so nothing on the runner's side could see it. Every journey for a
+ * non-administrator actor went on to sweep as an ANONYMOUS visitor, and because each of those
+ * journeys EXPECTS a denial, the login redirect satisfied every assertion. Four of the six
+ * actors reported `pass` having proved nothing whatever about permissions.
  *
  * @param string $token the wpj_login query value
  */
 function wpj_consume_login($token) {
     if (!wpj_login_token_valid($token)) {
-        return;
+        wpj_refuse_login('the token is malformed');
     }
     $key = wpj_login_token_key($token);
     $user_id = (int) get_transient($key);
     // Single use: only the request whose delete actually removed the row goes on, so two
     // fetches of one URL can never both authenticate.
     if (!delete_transient($key) || $user_id <= 0) {
-        return;
+        wpj_refuse_login('the token is unknown, expired, or has already been spent');
     }
     $user = get_userdata($user_id);
     if (!$user || wpj_actor_owned_role_of_user($user) === '') {
-        return;
+        wpj_refuse_login('the token names a user the runner does not own');
     }
 
     // $remember = false. A five-minute token has no business minting a fourteen-day session:
