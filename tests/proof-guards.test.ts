@@ -32,4 +32,14 @@ describe('the live proofs (R101)', () => {
     const text = await readFile(join(ROOT, 'tests', 'e2e', 'conformance.spec.ts'), 'utf8');
     expect(text).toMatch(/test\.afterAll\(async \(\) => \{[^}]*if \(!TARGETS_SCRATCH\) return;/);
   });
+
+  it('refuse, in the login-minting proof, any wp-cli or base URL that is not the scratch site, before the first call (R103)', async () => {
+    const text = await readFile(join(ROOT, 'scripts', 'prove-login-minting.sh'), 'utf8');
+    const guard = text.indexOf('must target wpjtest');
+    expect(guard).toBeGreaterThan(-1);
+    // Before the first wp-cli call and the first agent call.
+    expect(guard).toBeLessThan(text.indexOf('wp_cli user'));
+    expect(guard).toBeLessThan(text.indexOf('BASELINE="$(api'));
+    expect(text.slice(guard - 400, guard + 200)).toMatch(/exit 2/);
+  });
 });

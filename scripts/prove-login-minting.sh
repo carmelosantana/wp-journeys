@@ -62,6 +62,22 @@ minted_url() { sed -E 's/.*"url":"([^"]+)".*/\1/' | tr -d '\\'; }
 WP="${WPJ_WP:-}"
 wp_cli() { $WP "$@" 2>/dev/null; }
 
+# R103: with WPJ_WP set, this script DELETES and re-creates wpj_contributor (and, with no
+# --reassign, that user's posts), creates a forged user and changes a role, through whatever
+# WPJ_WP names. WPJ_WP is also the variable users export for their own site. So refuse, before
+# the first call of any kind, unless the wp-cli and the base URL both name the scratch site.
+if [ -n "$WP" ]; then
+  names_scratch=no
+  for word in $WP; do
+    [ "$word" = wpjtest ] && names_scratch=yes
+  done
+  case "$WPJ_BASE_URL" in *wpjtest*) ;; *) names_scratch=no ;; esac
+  if [ "$names_scratch" != yes ]; then
+    echo "refusing: WPJ_WP and WPJ_BASE_URL must target wpjtest — this script deletes and creates users through WPJ_WP" >&2
+    exit 2
+  fi
+fi
+
 echo "== target: $WPJ_BASE_URL"
 echo
 
