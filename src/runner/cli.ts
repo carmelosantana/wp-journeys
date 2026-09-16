@@ -12,9 +12,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { chromium } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 
 import { createAgentClient } from '../agent/client.ts';
@@ -33,6 +33,7 @@ import type { Finding } from '../sentinel/phplog.ts';
 import { captureBaseline, withoutBaselineNoise } from '../suite/baseline.ts';
 import type { Baseline } from '../suite/baseline.ts';
 import { conformanceSurface, coreSuite } from '../suite/index.ts';
+import { launchChromium } from './browser.ts';
 
 const run = promisify(execFile);
 
@@ -46,10 +47,9 @@ const SLUG = /^[a-z0-9][a-z0-9._-]*$/;
 export type ParsedArgs = { ok: true; plugin: string } | { ok: false; reason: string };
 
 /**
- * The `run` command's arguments (`mcp` takes none, and `main` routes it before this is called).
- * An unrecognised command is refused rather than
- * defaulted: `wpj skills install` arrives in Task 16, and quietly running the conformance suite
- * because the first word was not understood would be a surprising and destructive answer.
+ * The `run` command's arguments. `mcp` and `skills` are routed by `main` before this is called.
+ * An unrecognised command is refused rather than defaulted: quietly running the conformance
+ * suite because the first word was not understood would be a surprising and destructive answer.
  */
 export function parseArgs(argv: string[]): ParsedArgs {
   const [command] = argv;
@@ -327,10 +327,12 @@ function usage(reason: string): void {
       'usage:\n' +
       '  wpj run --plugin <slug>    run the conformance suite against a plugin\n' +
       '  wpj mcp                    serve the runner as MCP tools over stdio\n' +
+      '  wpj skills install         link this package\'s agent skills into ~/.claude/skills\n' +
       '\nenvironment:\n' +
       '  WPJ_BASE_URL      the target site; local hostnames only\n' +
       '  WPJ_AGENT_SECRET  the shared secret the companion mu-plugin expects\n' +
       '  WPJ_WP            the wp-cli command used to toggle the plugin under test\n' +
+      '  HOME              `skills install` links into $HOME/.claude/skills\n' +
       '  WPJ_MANIFEST_DIR  optional: the directory holding the plugin\'s wp-journeys.json. Not\n' +
       '                    necessarily the plugin root you mounted; escape-hatch module paths\n' +
       '                    resolve against, and must stay inside, this directory\n' +
@@ -348,13 +350,38 @@ function usage(reason: string): void {
 }
 
 /**
+ * `wpj skills install` (R99). Routed from `main`'s own argv like every other command, and only
+ * from the command line: it writes into a home directory, which no MCP tool may do.
+ */
+async function skillsCommand(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  const [sub, ...rest] = args;
+  if (sub === undefined) {
+    usage('wpj skills needs a subcommand — the only one is `install`');
+    return 2;
+  }
+  if (sub !== 'install') {
+    usage(`unknown skills subcommand ${JSON.stringify(sub)} — the only one is \`install\``);
+    return 2;
+  }
+  if (rest.length > 0) {
+    usage(`unexpected argument ${JSON.stringify(rest[0])} — wpj skills install takes no arguments`);
+    return 2;
+  }
+  const { installSkills } = await import('../commands/skills.ts');
+  // The env main was given, not process.env: that is what a test (and `HOME=… wpj`) controls.
+  return installSkills(env.HOME || homedir());
+}
+
+/**
  * @param createAgent injectable so a test can drive the run up to the first wp-cli call without a
  *   site; production always uses the real client
+ * @param launch injectable so a test can prove when, and whether, a browser is launched
  */
 export async function main(
   argv: string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
   createAgent: (baseUrl: string, secret: string) => AgentClient = createAgentClient,
+  launch: () => Promise<Browser> = launchChromium,
 ): Promise<number> {
   // Before parseArgs, config and everything else: the server must start even when configuration
   // is broken (R89), and in this mode stdout belongs to the protocol alone (R90).
@@ -364,9 +391,11 @@ export async function main(
       return 2;
     }
     const { serve } = await import('../mcp/server.ts');
-    await serve(undefined, { env, createAgent, launchBrowser: () => chromium.launch() });
+    await serve(undefined, { env, createAgent, launchBrowser: launch });
     return 0;
   }
+
+  if (argv[0] === 'skills') return skillsCommand(argv.slice(1), env);
 
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
@@ -392,12 +421,15 @@ export async function main(
   // deactivate, a baseline and a whole suite first.
   const plan = await manifestPlan(env, plugin);
 
-  const { suite, baseline, surface } = await prepareSuite(agent, cfg, plugin, plan, siteActions(wp, plugin));
-
-  const browser = await chromium.launch();
+  // The browser too (R93): a browser that was never fetched must not cost the operator a
+  // deactivate and a reactivate of the plugin under test first.
+  const browser = await launch();
   let results: JourneyResult[];
+  let surface: Surface;
   try {
-    results = await runSuite(suite, browser, cfg, agent, baseline);
+    const prepared = await prepareSuite(agent, cfg, plugin, plan, siteActions(wp, plugin));
+    surface = prepared.surface;
+    results = await runSuite(prepared.suite, browser, cfg, agent, prepared.baseline);
   } finally {
     await browser.close();
   }

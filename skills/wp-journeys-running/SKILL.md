@@ -13,10 +13,12 @@ description: Use when running the wp-journeys conformance suite (`wpj run`, `wpj
 
 | Task | Command |
 |---|---|
-| Run the suite | `wpj run --plugin <slug>` (in a checkout: `node bin/wpj.js run --plugin <slug>`) |
+| Run the suite | `wpj run --plugin <slug>` |
 | Serve the MCP tools over stdio | `wpj mcp` (no arguments) |
 | Link these skills into `~/.claude/skills` | `wpj skills install` |
 | Fetch the browser, once | `npx playwright install chromium` |
+
+`wpj` means `node bin/wpj.js` run from a checkout of wp-journeys. Node 22 refuses to run TypeScript from under `node_modules`, so an npm-installed copy does not start yet.
 
 | Variable | Meaning |
 |---|---|
@@ -56,6 +58,6 @@ Two lines come before the rows. `coverage admin: X of Y` counts the journeys tha
 | Running right after `wph mount` | Deactivate the plugin and delete its state first, or `lifecycle` misses the orphans. |
 | Pointing `WPJ_MANIFEST_DIR` at the plugin root | Point it at the directory that holds `wp-journeys.json`. |
 | Treating `debug.log signal unavailable` as noise | It means PHP diagnostics were **not read**. Turn on `WP_DEBUG_LOG`. |
-| `Executable doesn't exist` | Run `npx playwright install chromium`. |
+| `wpj could not launch Chromium` | Run `npx playwright install chromium` once. The run stopped before it touched the site. |
 
 Writing a manifest, and the false greens to avoid, are covered by **wp-journeys-authoring**.

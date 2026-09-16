@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,7 @@ import { register } from '../src/journeys/index.ts';
 import type { AgentClient } from '../src/agent/client.ts';
 import type { RawRegistries } from '../src/discovery/types.ts';
 import type { Journey, JourneyResult } from '../src/journeys/index.ts';
+import { skillsRoot, skillTarget } from '../src/commands/skills.ts';
 import { main, manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape, wpCommands } from '../src/runner/cli.ts';
 import type { Baseline } from '../src/suite/baseline.ts';
 import { SPAWN_TIMEOUT_MS } from './helpers/timeouts.ts';
@@ -68,8 +69,8 @@ describe('parseArgs', () => {
 
   it('refuses a missing command, an unknown command and a missing --plugin', () => {
     expect(parseArgs([]).ok).toBe(false);
-    // `wpj skills install` arrives in Task 16; today it is not a command and must not be
-    // silently treated as `run`.
+    // parseArgs is `run`'s parser. `wpj skills install` is routed by main() before it is called
+    // (R99), so here it is an unknown command and must not be silently treated as `run`.
     expect(parseArgs(['skills', 'install']).ok).toBe(false);
     expect(parseArgs(['run']).ok).toBe(false);
     expect(parseArgs(['run', '--plugin']).ok).toBe(false);
@@ -166,6 +167,22 @@ describe('the wpj entry point', { timeout: SPAWN_TIMEOUT_MS }, () => {
     expect(result.stdout + result.stderr).not.toContain('TOK-fatal-123');
   });
 
+  it('names `wpj skills install` in usage', () => {
+    expect(runCli([]).stderr).toMatch(/wpj skills install +link this package's agent skills into ~\/\.claude\/skills/);
+  });
+
+  it('installs the skills end to end into the HOME it is given, and only there', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wpj-home-'));
+    const result = spawnSync(process.execPath, [wpj, 'skills', 'install'], {
+      encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: home },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain(`linked ${skillTarget(home, 'wp-journeys-running')} -> ${join(skillsRoot(), 'wp-journeys-running')}`);
+    expect(await readlink(skillTarget(home, 'wp-journeys-authoring'))).toBe(join(skillsRoot(), 'wp-journeys-authoring'));
+  });
+
   it('names the environment variables without ever carrying a value for the secret', () => {
     const { stdout, stderr } = runCli([]);
     const all = stdout + stderr;
@@ -206,6 +223,97 @@ describe('wpj mcp (R90)', { timeout: SPAWN_TIMEOUT_MS }, () => {
   it('is named in usage', () => {
     const result = spawnSync(process.execPath, [wpj], { encoding: 'utf8' });
     expect(result.stderr).toMatch(/wpj mcp +serve the runner as MCP tools over stdio/);
+  });
+});
+
+/** Swallow what main() writes, and hand it back. */
+async function quietly<T>(body: () => Promise<T>): Promise<{ value: T; stdout: string; stderr: string }> {
+  const out = process.stdout.write;
+  const err = process.stderr.write;
+  let stdout = '';
+  let stderr = '';
+  process.stdout.write = ((chunk: string) => { stdout += chunk; return true; }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string) => { stderr += chunk; return true; }) as typeof process.stderr.write;
+  try {
+    return { value: await body(), stdout, stderr };
+  } finally {
+    process.stdout.write = out;
+    process.stderr.write = err;
+  }
+}
+
+/** A createAgent / launch that must never be reached. */
+const noAgent = (): AgentClient => { throw new Error('an agent was created'); };
+const noLaunch = (): Promise<never> => { throw new Error('a browser was launched'); };
+
+describe('wpj skills (R99: routed through main\'s own argv)', () => {
+  it('installs into the HOME main was given, touching neither the site nor a browser', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wpj-home-'));
+
+    const { value, stdout, stderr } = await quietly(() => main(['skills', 'install'], { HOME: home }, noAgent, noLaunch));
+
+    expect(value).toBe(0);
+    expect(stderr).toBe('');
+    expect(await readlink(skillTarget(home, 'wp-journeys-running'))).toBe(join(skillsRoot(), 'wp-journeys-running'));
+    expect(stdout).toContain(`linked ${skillTarget(home, 'wp-journeys-authoring')}`);
+  });
+
+  it('exits non-zero when the installer refuses, and keeps the user\'s directory (R98)', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wpj-home-'));
+    const mine = skillTarget(home, 'wp-journeys-running');
+    await mkdir(mine, { recursive: true });
+    await writeFile(join(mine, 'SKILL.md'), 'mine');
+
+    const { value, stderr } = await quietly(() => main(['skills', 'install'], { HOME: home }, noAgent, noLaunch));
+
+    expect(value).not.toBe(0);
+    expect(stderr).toContain(mine);
+    expect(await readFile(join(mine, 'SKILL.md'), 'utf8')).toBe('mine');
+    expect((await lstat(mine)).isSymbolicLink()).toBe(false);
+  });
+
+  it.each([
+    [['skills'], /wpj skills needs a subcommand/],
+    [['skills', 'uninstall'], /unknown skills subcommand "uninstall"/],
+    [['skills', 'install', '--force'], /unexpected argument "--force"/],
+  ])('refuses %j loudly, with usage, and installs nothing', async (argv, reason) => {
+    const home = await mkdtemp(join(tmpdir(), 'wpj-home-'));
+
+    const { value, stdout, stderr } = await quietly(() => main(argv, { HOME: home }, noAgent, noLaunch));
+
+    expect(value).toBe(2);
+    expect(stdout).toBe('');
+    expect(stderr).toMatch(reason);
+    expect(stderr).toContain('usage:');
+    await expect(lstat(join(home, '.claude'))).rejects.toThrow(/ENOENT/);
+  });
+
+  it('is not an MCP tool: the server offers no way to write into a home directory', async () => {
+    const { TOOLS } = await import('../src/mcp/tools.ts');
+    expect(Object.keys(TOOLS).filter((name) => /skill|install/i.test(name))).toEqual([]);
+  });
+});
+
+describe('the browser (R93)', () => {
+  it('prints usage for a bare `wpj` without launching anything', async () => {
+    let launched = false;
+    const { value } = await quietly(() => main([], {}, noAgent, async () => { launched = true; return noLaunch(); }));
+
+    expect(value).toBe(2);
+    expect(launched).toBe(false);
+  });
+
+  it('launches BEFORE the run touches the site, so a missing browser costs no plugin toggle', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'wpj-launch-'));
+    const marker = join(dir, 'wp-cli-ran');
+    const agent = new Proxy({}, { get: () => () => Promise.reject(new Error('the agent was asked something')) }) as AgentClient;
+
+    const outcome = await main(['run', '--plugin', 'acme'], {
+      WPJ_BASE_URL: 'https://site.test', WPJ_AGENT_SECRET: 'x'.repeat(16), WPJ_WP: `touch ${marker} #`,
+    }, () => agent, () => Promise.reject(new Error('wpj could not launch Chromium (test)'))).then(() => 'resolved', (error: unknown) => error);
+
+    expect(String(outcome)).toContain('wpj could not launch Chromium (test)');
+    await expect(access(marker)).rejects.toThrow();
   });
 });
 

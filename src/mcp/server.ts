@@ -18,7 +18,6 @@ import { Console } from 'node:console';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 
-import { chromium } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 
 import { ALL_ACTORS, isAnonymous, type Actor } from '../actors/roles.ts';
@@ -32,6 +31,7 @@ import { outcomeOf, register } from '../journeys/index.ts';
 import { openActorSession, type ActorSession } from '../journeys/support.ts';
 import { BODY_TIMEOUT_MS } from '../manifest/interpret.ts';
 import { plural, renderFinding, renderJourney } from '../report/summary.ts';
+import { launchChromium } from '../runner/browser.ts';
 import { manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape } from '../runner/cli.ts';
 import { redactLoginToken } from '../sentinel/classify.ts';
 import type { Finding } from '../sentinel/phplog.ts';
@@ -82,7 +82,7 @@ export interface McpDeps {
 }
 
 function defaultDeps(): McpDeps {
-  return { env: process.env, createAgent: createAgentClient, launchBrowser: () => chromium.launch() };
+  return { env: process.env, createAgent: createAgentClient, launchBrowser: () => launchChromium() };
 }
 
 // ── rendering (formats the runner already has) ───────────────────────────────────────────────
