@@ -55,7 +55,11 @@ export interface ManifestJourney {
 export interface Manifest {
   version: 1;
   plugin: string;
-  /** The admin menu slug that proves the plugin is live; absent means always run. */
+  /**
+   * The admin screen that proves the plugin is live (R76): a plugin page slug (served at
+   * `admin.php?page=<slug>`) or a URL starting with `/`. The administrator must be served it
+   * before any authored journey runs; if not, every one fails. Absent means no precondition.
+   */
   gate?: { screen: string };
   /**
    * Surface the plugin deprecates on purpose (R74). A tag listed here renders on its own row, and

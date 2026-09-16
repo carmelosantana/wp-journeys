@@ -29,9 +29,10 @@ const valid = {
   ],
 };
 
-/** `valid` with its first journey replaced by `journey`. */
+/** `valid` with its journeys replaced by `journey`, and no gate unless a test adds one. */
 function withJourney(journey: Record<string, unknown>) {
-  return { ...valid, journeys: [journey] };
+  const { gate: _gate, ...ungated } = valid;
+  return { ...ungated, journeys: [journey] };
 }
 
 describe('parseManifest', () => {
@@ -646,6 +647,72 @@ describe('interpret', () => {
       expect(result.findings).toMatchObject([
         { kind: 'assertion', text: expect.stringContaining('the shortcode [acme] came back verbatim') },
       ]);
+    });
+  });
+
+  describe('gate (R76: the plugin must be live before any authored journey counts)', () => {
+    const denial = {
+      name: 'deny', actor: 'editor', surface: 'admin',
+      screens: [{ url: SCREEN, allow: [], deny: ['editor'] }],
+    };
+    const echo = { name: 'mod', actor: 'editor', surface: 'admin', module: 'tests/fixtures/journeys/echo.ts' };
+    const repo = fileURLToPath(new URL('..', import.meta.url));
+
+    /** Both journeys of a gated manifest, on ONE page so the order of every visit is visible. */
+    function gated(gate: unknown, journeys: unknown[] = [denial, echo]) {
+      const page = new FakePage();
+      const browser = new FakeBrowser(page);
+      const { agent } = fakeAgent();
+      const manifest = parseManifest({ ...withJourney(denial), journeys, gate }, 'f.json');
+      const runs = interpret(manifest, repo).map((journey) => () => journey.run(browser.asBrowser(), CFG, agent));
+      return { page, runs };
+    }
+
+    it('serves the gate screen to the administrator ONCE, before the first authored step', async () => {
+      const { page, runs } = gated({ screen: 'acme' });
+      page.navigations = [ADMIN_LANDING, landsOn(`https://s.test${SCREEN}`), ADMIN_LANDING, CONTROL,
+        (url) => response(403, `https://s.test${url}`)];
+
+      const [first, second] = runs;
+      const denied = await first!();
+      const moduled = await second!();
+
+      expect(denied.findings).toEqual([]);
+      expect(page.gotos).toEqual([MINT, SCREEN, MINT, CONTROL_SCREEN, SCREEN]);
+      // The module journey ran too, and the gate was not visited a second time.
+      expect(moduled.findings).toEqual([{ kind: 'assertion', text: 'echo module ran' }]);
+    });
+
+    it('takes a URL as the gate screen when it starts with a slash', async () => {
+      const { page, runs } = gated({ screen: '/wp-admin/options-general.php?page=acme' }, [echo]);
+      page.navigations = [ADMIN_LANDING, landsOn('https://s.test/wp-admin/options-general.php?page=acme')];
+
+      await runs[0]!();
+
+      expect(page.gotos).toEqual([MINT, '/wp-admin/options-general.php?page=acme']);
+    });
+
+    it('FAILS every authored journey, naming the gate, when the administrator is not served it', async () => {
+      const { page, runs } = gated({ screen: 'acme' });
+      page.navigations = [ADMIN_LANDING, (url) => response(404, `https://s.test${url}`)];
+
+      const errors = await Promise.all(runs.map((run) => run().then(() => null, (error: Error) => error.message)));
+
+      for (const message of errors) {
+        expect(message).toMatch(/gate "acme" failed: the administrator was not served \/wp-admin\/admin\.php\?page=acme/);
+      }
+      expect(errors[0]).toMatch(/^journey "deny": /);
+      expect(errors[1]).toMatch(/^journey "mod": /);
+      // No authored step ran: only the gate's own two navigations happened.
+      expect(page.gotos).toEqual([MINT, SCREEN]);
+    });
+
+    it('has no precondition, and makes no visit, when the manifest declares no gate', async () => {
+      const { page, runs } = gated(undefined, [echo]);
+
+      await runs[0]!();
+
+      expect(page.gotos).toEqual([]);
     });
   });
 

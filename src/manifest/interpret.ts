@@ -17,6 +17,9 @@
  *  - a shortcode is proven to have rendered THROUGH the agent and to have expanded, by the same
  *    check the discovered-surface journey uses (R5).
  *
+ * A manifest's `gate` (R76) is checked once, before the first authored journey, and a gate the
+ * administrator is not served fails every journey of the manifest, naming it.
+ *
  * Authentication is `runAsActor`'s, and a control visit to a screen the actor must be SERVED
  * opens every non-anonymous journey the INTERPRETER runs (R67), so a manifest denial for a
  * logged-in actor cannot be satisfied by an anonymous visitor: a refused, bounced or
@@ -27,10 +30,12 @@ import { randomBytes } from 'node:crypto';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Page } from '@playwright/test';
+import type { Browser, Page } from '@playwright/test';
 
-import { isAnonymous } from '../actors/roles.ts';
+import { Actor, isAnonymous } from '../actors/roles.ts';
+import type { AgentClient } from '../agent/client.ts';
 import { shortcodeRenderDefect, shortcodeRenderUrl } from '../agent/render.ts';
+import type { Config } from '../config.ts';
 import { messageOf } from '../errors.ts';
 import type { Journey, JourneyResult } from '../journeys/index.ts';
 import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
@@ -162,12 +167,55 @@ function readsBack(text: string, written: string): boolean {
   return comparable(text).includes(comparable(written));
 }
 
-function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => string): Journey {
+/** Resolves when the gate held; rejects with why it did not. Shared by every journey of a manifest. */
+type Gate = (browser: Browser, cfg: Config, agent: AgentClient) => Promise<void>;
+
+/** A gate's screen: a URL when it starts with `/`, else a plugin page slug served by `admin.php`. */
+export function gateUrl(screen: string): string {
+  return screen.startsWith('/') ? screen : `/wp-admin/admin.php?page=${encodeURIComponent(screen)}`;
+}
+
+/**
+ * The manifest's gate (R76), checked ONCE for all its journeys and remembered.
+ *
+ * "The plugin is live" is asserted, not assumed: the administrator must be SERVED the gate
+ * screen — 2xx, not denied, and clean. Otherwise every authored journey fails naming the gate,
+ * because none of what it would go on to assert means anything about a plugin that is not
+ * there. Never a skip: a gate that does not hold is a failure. No gate, no precondition.
+ */
+function gateFor(screen: string | undefined): Gate {
+  if (screen === undefined) return async () => {};
+  const url = gateUrl(screen);
+  let held: Promise<void> | undefined;
+  return (browser, cfg, agent) => {
+    held ??= (async () => {
+      const result = await runAsActor(browser, cfg, agent, `gate:${screen}`, Actor.ADMINISTRATOR, 'admin', async (page, sentinel) => {
+        sentinel.expect({ denyExpected: false });
+        await sentinel.visit(page, url);
+        return 0;
+      });
+      if (result.findings.length > 0) {
+        throw new Error(
+          `gate "${screen}" failed: the administrator was not served ${url} cleanly — `
+            + result.findings.map((finding) => finding.text).join('; '),
+        );
+      }
+    })();
+    return held;
+  };
+}
+
+function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => string, gate: Gate): Journey {
   return {
     name: entry.name,
     actor: entry.actor,
     surface: entry.surface,
     run: async (browser, cfg, agent) => {
+      try {
+        await gate(browser, cfg, agent);
+      } catch (error) {
+        throw new Error(`journey "${entry.name}": ${messageOf(error)}`, { cause: error });
+      }
       if (entry.module !== undefined) {
         const loaded = await loadModule(entry, entry.module, manifestDir);
         let raw: unknown;
@@ -258,5 +306,6 @@ function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => st
  *   deterministic; a parameter only so a test can pin the suffix and assert the exact value.
  */
 export function interpret(manifest: Manifest, manifestDir: string, nonce: () => string = freshNonce): Journey[] {
-  return manifest.journeys.map((entry) => journeyFor(entry, manifestDir, nonce));
+  const gate = gateFor(manifest.gate?.screen);
+  return manifest.journeys.map((entry) => journeyFor(entry, manifestDir, nonce, gate));
 }
