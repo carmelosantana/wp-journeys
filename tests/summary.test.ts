@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { Actor } from '../src/actors/roles.ts';
 import type { Surface } from '../src/discovery/types.ts';
 import type { JourneyResult } from '../src/journeys/index.ts';
-import { exitCodeFor, renderSummary } from '../src/report/summary.ts';
+import { exitCodeFor, renderJourney, renderSummary } from '../src/report/summary.ts';
 
 const pass: JourneyResult = {
   name: 'frontend-renders', actor: Actor.ANONYMOUS, surface: 'frontend',
@@ -206,5 +206,17 @@ describe('exitCodeFor', () => {
   it('agrees with the summary text: a run of nothing but skips is not a failure', () => {
     expect(exitCodeFor([skip, skip])).toBe(0);
     expect(renderSummary([skip, skip])).toContain('2 skipped');
+  });
+});
+
+describe('renderJourney (R88: one row, in the summary\'s own format)', () => {
+  it('is exactly the row renderSummary prints', () => {
+    for (const result of [pass, skip, fail]) {
+      expect(renderSummary([result]).split('\n').slice(1).join('\n')).toBe(renderJourney(result));
+    }
+  });
+
+  it('renders a skip as skip, with its reason, never as ok', () => {
+    expect(renderJourney(skip)).toMatch(/^ {2}skip +admin-sweep:acme .* skipped \(acme is not active\)$/);
   });
 });

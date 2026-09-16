@@ -172,13 +172,84 @@ export async function manifestPlan(env: NodeJS.ProcessEnv, plugin: string): Prom
   }
   // The directory is passed EXPLICITLY: interpret() resolves and confines module paths
   // against it, and the runner's own cwd is not where any plugin keeps its journeys.
-  const journeys = interpret(manifest, dir);
-  const deprecatedShortcodes = manifest.deprecated?.shortcodes ?? [];
-  // Build the core suite's NAMES now, with nothing real in it, so a collision is refused here —
-  // before the baseline deactivates anything — rather than inside coreSuite after it has. The
-  // names do not depend on the surface, only on the plugin and these two lists.
-  coreSuite(plugin, NO_SURFACE, NO_BASELINE, async () => {}, journeys, deprecatedShortcodes);
-  return { journeys, deprecatedShortcodes };
+  const plan = { journeys: interpret(manifest, dir), deprecatedShortcodes: manifest.deprecated?.shortcodes ?? [] };
+  // Build the suite's shape now, so a collision is refused here — before the baseline
+  // deactivates anything — rather than inside coreSuite after it has.
+  suiteShape(plugin, plan);
+  return plan;
+}
+
+/**
+ * Every journey a run against `plugin` would register, built WITHOUT touching the site.
+ *
+ * The names (and each journey's declared `uninstallsPlugin`) do not depend on the surface, only
+ * on the plugin and the manifest plan, so they can be known before any baseline. Its journeys
+ * are NOT runnable: they were built against an empty surface and a no-op uninstall. Refuses a
+ * name collision, as `coreSuite` always does.
+ */
+export function suiteShape(plugin: string, plan: ManifestPlan): Record<string, Journey> {
+  return coreSuite(plugin, NO_SURFACE, NO_BASELINE, async () => {}, plan.journeys, plan.deprecatedShortcodes);
+}
+
+/** The three things a run does to the site through wp-cli. */
+export interface SiteActions {
+  deactivate: () => Promise<void>;
+  activate: () => Promise<void>;
+  uninstall: () => Promise<void>;
+}
+
+async function shell(command: string): Promise<void> {
+  await run('sh', ['-c', command]);
+}
+
+/** `wpCommands`, made runnable. `runShell` is injectable so a test runs no shell. */
+export function siteActions(
+  wp: string, plugin: string, runShell: (command: string) => Promise<void> = shell,
+): SiteActions {
+  const commands = wpCommands(wp, plugin);
+  return {
+    deactivate: () => runShell(commands.deactivate),
+    activate: () => runShell(commands.activate),
+    uninstall: () => runShell(commands.uninstall),
+  };
+}
+
+export interface PreparedSuite {
+  suite: Record<string, Journey>;
+  baseline: Baseline;
+  /** What the run attributes to the plugin: the delta's screens, the site's real caps. */
+  surface: Surface;
+}
+
+/**
+ * Capture the baseline and build the runnable suite — the ONE way a run is prepared, used by
+ * `wpj run` and by the MCP server's `run_journey` (R88).
+ *
+ * This DEACTIVATES and then REACTIVATES the plugin under test (the baseline owns that pair), so
+ * the plugin is left active whatever its state before.
+ *
+ * @param fetchImpl injectable so a test can drive the baseline's front-end probe without a network
+ */
+export async function prepareSuite(
+  agent: AgentClient,
+  cfg: Config,
+  plugin: string,
+  plan: ManifestPlan,
+  actions: SiteActions,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PreparedSuite> {
+  // The baseline owns the deactivate/activate pair: everything attributable to the plugin is a
+  // delta against the site WITHOUT it, and that ordering is a guarantee rather than a habit.
+  const baseline = await captureBaseline(agent, cfg, plugin, actions.deactivate, actions.activate, fetchImpl);
+
+  // conformanceSurface, NOT surfaceDelta: the screens are the delta, but the capability map must
+  // come from the site as it IS with the plugin active. A raw delta reports only the caps the
+  // plugin ADDED, which for most plugins is none — and the access matrix would then expect the
+  // administrator to be denied its own settings screen, inverting the entire sweep.
+  const surface = conformanceSurface(baseline.surface, projectSurface(await agent.discover()));
+
+  const suite = coreSuite(plugin, surface, baseline, actions.uninstall, plan.journeys, plan.deprecatedShortcodes);
+  return { suite, baseline, surface };
 }
 
 /**
@@ -307,30 +378,16 @@ export async function main(
   // deactivate, a baseline and a whole suite first.
   const plan = await manifestPlan(env, plugin);
 
-  const commands = wpCommands(wp, plugin);
-  const shell = (command: string) => async (): Promise<void> => {
-    await run('sh', ['-c', command]);
-  };
-
-  // The baseline owns the deactivate/activate pair: everything attributable to the plugin is a
-  // delta against the site WITHOUT it, and that ordering is a guarantee rather than a habit.
-  const baseline = await captureBaseline(agent, cfg, plugin, shell(commands.deactivate), shell(commands.activate));
-
-  // conformanceSurface, NOT surfaceDelta: the screens are the delta, but the capability map must
-  // come from the site as it IS with the plugin active. A raw delta reports only the caps the
-  // plugin ADDED, which for most plugins is none — and the access matrix would then expect the
-  // administrator to be denied its own settings screen, inverting the entire sweep.
-  const delta = conformanceSurface(baseline.surface, projectSurface(await agent.discover()));
+  const { suite, baseline, surface } = await prepareSuite(agent, cfg, plugin, plan, siteActions(wp, plugin));
 
   const browser = await chromium.launch();
   let results: JourneyResult[];
   try {
-    const suite = coreSuite(plugin, delta, baseline, shell(commands.uninstall), plan.journeys, plan.deprecatedShortcodes);
     results = await runSuite(suite, browser, cfg, agent, baseline);
   } finally {
     await browser.close();
   }
 
-  process.stdout.write(`${renderSummary(results, delta)}\n`);
+  process.stdout.write(`${renderSummary(results, surface)}\n`);
   return exitCodeFor(results);
 }

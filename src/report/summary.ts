@@ -44,7 +44,8 @@ function labelFor(outcome: Outcome, findingCount: number): string {
   return outcome === 'skip' ? 'skip' : 'ok';
 }
 
-function renderJourney(result: JourneyResult): string {
+/** One journey's row, exactly as the summary prints it — also the MCP `run_journey` result (R88). */
+export function renderJourney(result: JourneyResult): string {
   const outcome = outcomeOf(result);
   const label = labelFor(outcome, result.findings.length);
   let head = `  ${label.padEnd(8)} ${result.name} (${result.actor}/${result.surface}) entitiesCreated=${result.entitiesCreated}`;

@@ -9,8 +9,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Actor } from '../src/actors/roles.ts';
 import { register } from '../src/journeys/index.ts';
 import type { AgentClient } from '../src/agent/client.ts';
+import type { RawRegistries } from '../src/discovery/types.ts';
 import type { Journey, JourneyResult } from '../src/journeys/index.ts';
-import { main, manifestPlan, parseArgs, runSuite, wpCommands } from '../src/runner/cli.ts';
+import { main, manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape, wpCommands } from '../src/runner/cli.ts';
 import type { Baseline } from '../src/suite/baseline.ts';
 
 /** A per-request deprecation this site writes whatever is under test (R45). */
@@ -445,5 +446,68 @@ describe('manifestPlan (R70: the manifest directory is not the mount path)', () 
     // The ordering first: had any wp-cli command run, the marker would exist.
     await expect(access(marker)).rejects.toThrow();
     expect(String(outcome)).toMatch(/duplicate journey name "frontend-renders"/);
+  });
+});
+
+describe('the run builder (R88: one way to build a run, shared by `wpj run` and the MCP server)', () => {
+  const NO_PLAN = { journeys: [], deprecatedShortcodes: [] };
+  const RAW: RawRegistries = {
+    menu: [], submenu: {}, blocks: [], shortcodes: [], routes: {}, roles: { administrator: ['read'] }, pluginPages: [],
+  };
+
+  it('names the whole suite without touching the site, and marks only lifecycle as uninstalling', () => {
+    const shape = suiteShape('acme', NO_PLAN);
+
+    expect(Object.keys(shape)).toContain('lifecycle:acme');
+    expect(Object.keys(shape)).toContain('admin-sweep:acme:subscriber');
+    const uninstalling = Object.values(shape).filter((journey) => journey.uninstallsPlugin).map((j) => j.name);
+    expect(uninstalling).toEqual(['lifecycle:acme']);
+  });
+
+  it('includes the manifest\'s authored journeys in the shape', () => {
+    const authored = scripted('acme-own', async () => resultOf('acme-own'));
+    expect(Object.keys(suiteShape('acme', { journeys: [authored], deprecatedShortcodes: [] }))).toContain('acme-own');
+  });
+
+  it('builds the wp-cli actions from the operator\'s command, uninstall included with --skip-delete', async () => {
+    const ran: string[] = [];
+    const actions = siteActions('wp', 'acme', async (command) => { ran.push(command); });
+
+    await actions.deactivate();
+    await actions.activate();
+    await actions.uninstall();
+
+    expect(ran).toEqual([
+      'wp plugin deactivate acme', 'wp plugin activate acme',
+      'wp plugin uninstall acme --deactivate --skip-delete',
+    ]);
+  });
+
+  it('captures the baseline around a deactivate/activate pair, then builds the suite — and never uninstalls', async () => {
+    const order: string[] = [];
+    const agent = {
+      status: async () => { order.push('status'); return { ok: true, wp: '7.1', php: '8.4', debugLog: true, pluginActive: false }; },
+      ensureActor: async () => ({ userId: 5 }),
+      discover: async () => { order.push('discover'); return RAW; },
+      snapshot: async () => ({ options: [], tables: [], cron: [], userMeta: [] }),
+      logDelta: async () => ({ offset: 1, lines: [], available: true }),
+    } as unknown as AgentClient;
+    const fetchImpl = (async () => new Response('<html><body>home</body></html>')) as typeof fetch;
+
+    const prepared = await prepareSuite(agent, { baseUrl: 'https://s.test/', secret: 'x'.repeat(16) }, 'acme', NO_PLAN, {
+      deactivate: async () => { order.push('deactivate'); },
+      activate: async () => { order.push('activate'); },
+      uninstall: async () => { order.push('UNINSTALL'); },
+    }, fetchImpl);
+
+    expect(order[0]).toBe('status');
+    expect(order[1]).toBe('deactivate');
+    expect(order).toContain('activate');
+    expect(order.indexOf('activate')).toBeLessThan(order.lastIndexOf('discover'));
+    expect(order).not.toContain('UNINSTALL');
+    expect(prepared.baseline.activeAtStart).toBe(false);
+    expect(Object.keys(prepared.suite)).toEqual(Object.keys(suiteShape('acme', NO_PLAN)));
+    // The capability map is the site's own, not the delta's (conformanceSurface).
+    expect(prepared.surface.caps).toEqual({ administrator: ['read'] });
   });
 });

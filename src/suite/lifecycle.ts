@@ -35,6 +35,7 @@ export function lifecycle(plugin: string, baseline: Baseline, uninstall: () => P
     name,
     actor: Actor.ADMINISTRATOR,
     surface: 'admin',
+    uninstallsPlugin: true,
     run: async (browser, cfg, agent: AgentClient) => {
       const result = await runAsActor(browser, cfg, agent, name, Actor.ADMINISTRATOR, 'admin', async (page, sentinel, note) => {
         // Touch the dashboard while active: an activation fatal usually shows here first.

@@ -85,3 +85,9 @@ describe('lifecycle: what its orphan check can see (R75)', () => {
     ]);
   });
 });
+
+describe('lifecycle declares that it uninstalls (R88)', () => {
+  it('is marked, so a caller that must not uninstall can refuse it without guessing from its name', () => {
+    expect(lifecycle('acme', baselineWith(), async () => {}).uninstallsPlugin).toBe(true);
+  });
+});

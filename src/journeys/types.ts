@@ -49,5 +49,11 @@ export interface Journey {
   name: string;
   actor: Actor;
   surface: SurfaceAxis;
+  /**
+   * Set by a journey that UNINSTALLS the plugin under test (today: only lifecycle). Declared by
+   * the journey itself, so a caller that must never uninstall as a side effect — the MCP
+   * server's `run_journey` (R88) — refuses it without guessing from a name.
+   */
+  uninstallsPlugin?: true;
   run(browser: Browser, cfg: Config, agent: AgentClient): Promise<JourneyResult>;
 }
