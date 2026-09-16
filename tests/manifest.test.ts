@@ -437,6 +437,54 @@ describe('interpret', () => {
       expect(result.findings).toMatchObject([{ kind: 'assertion', text: expect.stringContaining('read-back failed') }]);
     });
 
+    it('reads back through a theme that upper-cases the rendered text (R68a)', async () => {
+      // innerText is RENDERED text: `text-transform: uppercase` on a title or heading returns
+      // the value in a case that was never written. That is styling, not a failed save.
+      const { page, run } = arrange(journey, undefined, nonce);
+      page.navigations = [
+        ADMIN_LANDING, CONTROL, landsOn('https://s.test/'), landsOn(`https://s.test${SCREEN}`),
+        (url) => { page.text = `SITE TITLE: ${WRITTEN.toUpperCase()}`; return response(200, url); },
+      ];
+
+      const result = await run();
+
+      expect(result.findings).toEqual([]);
+    });
+
+    it('reads back a value the rendered text wraps across a line break (R68a)', async () => {
+      // innerText inserts a newline where the rendered text wraps; a value straddling that
+      // wrap is still the value.
+      const { page, run } = arrange(journey, undefined, nonce);
+      page.navigations = [
+        ADMIN_LANDING, CONTROL, landsOn('https://s.test/'), landsOn(`https://s.test${SCREEN}`),
+        (url) => { page.text = 'Site title:\n  Hello from\nwp-journeys   wpj-fixed\n'; return response(200, url); },
+      ];
+
+      const result = await run();
+
+      expect(result.findings).toEqual([]);
+    });
+
+    it('names the journey and the readBack URL when the page served no HTML body, with a short timeout (R68b)', async () => {
+      // A feed, a REST route or anything XML/JSON has no <body>: the locator would wait out
+      // Playwright's 30s default and then fail with a message about a locator, naming neither
+      // the read-back nor the URL.
+      const { page, run } = arrange(journey, undefined, nonce);
+      page.navigations = [ADMIN_LANDING, CONTROL];
+      page.textError = new Error('locator.innerText: Timeout 5000ms exceeded.');
+
+      const result = await run();
+
+      expect(result.findings).toMatchObject([{
+        kind: 'assertion',
+        text: expect.stringContaining('journey "s": the read-back page / served no HTML body'),
+      }]);
+      expect(result.findings[0]?.text).toContain('a readBack must be an HTML page');
+      expect(page.innerTextCalls).toHaveLength(1);
+      expect(page.innerTextCalls[0]?.timeout).toBeGreaterThan(0);
+      expect(page.innerTextCalls[0]?.timeout).toBeLessThanOrEqual(5_000);
+    });
+
     it('draws a fresh nonce for every write by default, so no earlier write can satisfy a later read-back', async () => {
       const two = {
         name: 'two', actor: 'administrator', surface: 'both',

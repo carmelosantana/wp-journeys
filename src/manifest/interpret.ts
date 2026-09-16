@@ -100,12 +100,47 @@ function freshNonce(): string {
 }
 
 /**
+ * How long to wait for a `<body>` on a page that has ALREADY finished loading (`visit()`
+ * awaited networkidle). Playwright's 30s default is for a body that is still arriving; here a
+ * body that is not there yet is a body that is not coming.
+ */
+const BODY_TIMEOUT_MS = 5_000;
+
+/**
  * The body's VISIBLE text, which is what a setting reaches. Matching the raw HTML source
  * instead would let a short or common value — "1", "Home", the plugin's own name — read back
  * out of a class name, a script body, a comment or the head, regardless of the setting.
+ *
+ * A read-back URL that serves a feed, a REST route or anything XML/JSON has no `<body>`. The
+ * locator would wait out its full timeout and then fail with a message about a locator, naming
+ * neither the read-back nor the URL — so the wait is short and the failure is named here.
  */
-function visibleText(page: Page): Promise<string> {
-  return page.locator('body').innerText();
+async function visibleText(page: Page, entry: ManifestJourney, url: string): Promise<string> {
+  try {
+    return await page.locator('body').innerText({ timeout: BODY_TIMEOUT_MS });
+  } catch (error) {
+    throw new Error(
+      `journey "${entry.name}": the read-back page ${url} served no HTML body (${messageOf(error)}) — `
+        + 'a readBack must be an HTML page',
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * Both sides of a read-back comparison, made comparable. `innerText` is RENDERED text: a
+ * theme's `text-transform: uppercase` returns a case that was never written, and a wrap
+ * inserts a newline mid-value. Neither is a failed save. Lower-cased, whitespace runs
+ * collapsed, trimmed — on the written value too, so both sides ask the same question. The
+ * nonce is lowercase hex and survives unchanged.
+ */
+function comparable(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/** Whether `written` reads back in `text`, after both are made comparable. */
+function readsBack(text: string, written: string): boolean {
+  return comparable(text).includes(comparable(written));
 }
 
 function journeyFor(entry: ManifestJourney, pluginDir: string, nonce: () => string): Journey {
@@ -142,7 +177,7 @@ function journeyFor(entry: ManifestJourney, pluginDir: string, nonce: () => stri
           // Absent BEFORE the write. Change detection, not a state check; and the place a
           // matcher that finds everything would show itself first.
           await sentinel.visit(page, setting.readBack);
-          if (await visibleText(page).then((text) => text.includes(written))) {
+          if (readsBack(await visibleText(page, entry, setting.readBack), written)) {
             throw new Error(
               `read-back for "${entry.name}": ${JSON.stringify(written)} was already visible at ${setting.readBack} `
                 + 'before it was written — its appearance afterwards could prove nothing, so the write was not made',
@@ -157,7 +192,7 @@ function journeyFor(entry: ManifestJourney, pluginDir: string, nonce: () => stri
 
           // Present AFTER. This is the assertion the whole entry exists for.
           await sentinel.visit(page, setting.readBack);
-          if (!(await visibleText(page)).includes(written)) {
+          if (!readsBack(await visibleText(page, entry, setting.readBack), written)) {
             throw new Error(
               `read-back failed for "${entry.name}": wrote ${JSON.stringify(written)} to ${setting.field} `
                 + `on ${setting.url}, but it never appeared at ${setting.readBack}. Either the save was refused — a `

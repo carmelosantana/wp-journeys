@@ -32,6 +32,10 @@ export class FakePage {
   body = '<html><body>ok</body></html>';
   /** The body's VISIBLE text, as `locator('body').innerText()` reads it — never the source. */
   text = 'ok';
+  /** When set, `innerText()` rejects with it — a page that served no HTML body. */
+  textError: Error | null = null;
+  /** The options each `innerText()` call was given, so a test can see the timeout it asked for. */
+  readonly innerTextCalls: Array<{ timeout?: number }> = [];
   /** Every `fill(selector, value)` the journey made, in order. */
   readonly fills: Array<[string, string]> = [];
   /** Every key the journey pressed, in order. */
@@ -71,8 +75,14 @@ export class FakePage {
     this.fills.push([selector, value]);
   }
 
-  locator(_selector: string): { innerText: () => Promise<string> } {
-    return { innerText: async () => this.text };
+  locator(_selector: string): { innerText: (options?: { timeout?: number }) => Promise<string> } {
+    return {
+      innerText: async (options = {}) => {
+        this.innerTextCalls.push(options);
+        if (this.textError) throw this.textError;
+        return this.text;
+      },
+    };
   }
 
   async waitForLoadState(): Promise<void> {}
