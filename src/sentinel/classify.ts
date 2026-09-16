@@ -165,7 +165,7 @@ const SEVERITY = 'Warning|Notice|Deprecated|Fatal error|Parse error|Recoverable 
  * the page. Matching the format is what distinguishes them.
  *
  *   html_errors=1  <b>Warning</b>:  msg in <b>/path.php</b> on line <b>42</b>
- *   html_errors=0  Warning: msg in /path.php on line 42
+ *   html_errors=0  Warning: msg in /path.php on line 42   (at a line start, or first in <body>)
  *   fatals         Fatal error: Uncaught Error: ...
  *
  * The file position may be `Unknown` or `Command line code` instead of a path: PHP reports no
@@ -176,7 +176,11 @@ const SEVERITY = 'Warning|Notice|Deprecated|Fatal error|Parse error|Recoverable 
  */
 const BODY_DIAGNOSTIC = new RegExp(
   `<b>(?:${SEVERITY})<\\/b>:[\\s\\S]*?<b>[^<]*<\\/b> on line <b>\\d+<\\/b>` +
-    `|^(?:${SEVERITY}): [\\s\\S]*? in (?:\\/[^\\s]+|Unknown|Command line code) on line \\d+` +
+    // At a line start, OR at the very start of the body. PHP output that precedes all markup
+    // loses its leading newline to the HTML parser and lands right after an IMPLIED <body>,
+    // which a later <body class=...> lends its attributes to; `^` alone never sees it, and a
+    // notice printed on plugins_loaded is exactly that shape (first contact, Alpaca Bot).
+    `|(?:^|(?<=<body(?:\\s[^>]*)?>))(?:${SEVERITY}): [\\s\\S]*? in (?:\\/[^\\s]+|Unknown|Command line code) on line \\d+` +
     // To end of line, not just the `Uncaught ` prefix: the exception class and message are the
     // only thing distinguishing one uncaught fatal from another (R63).
     `|(?:${SEVERITY}): Uncaught [^\\n]*`,

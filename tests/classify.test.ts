@@ -179,6 +179,42 @@ describe('scanBody', () => {
     expect(findings[1]?.text).toContain('Undefined array key "id"');
   });
 
+  describe('a plain-text diagnostic printed BEFORE any markup (first contact, Alpaca Bot)', () => {
+    // The sentinel scans page.content(), the browser's serialisation, not the bytes PHP sent.
+    // PHP printed "\nNotice: ..." ahead of everything; the HTML parser drops that leading
+    // newline and puts the text straight after an IMPLIED <body>. A `^`-anchored match never
+    // sees it — and under WP_DEBUG_LOG off, bodyscan is the only signal there is. Observed live:
+    // the raw body matched, the serialised DOM of the same response did not.
+    const notice = 'Notice: Function alpacabot_agent was called <strong>incorrectly</strong>. The shortcode is deprecated. '
+      + 'Please see <a href="https://developer.wordpress.org/">Debugging in WordPress</a> for more information. '
+      + '(This message was added in version 0.5.0.) in /var/www/html/wp-includes/functions.php on line 6260';
+
+    it('is found directly after the implied <body>, exactly as Chromium serialised it', () => {
+      const dom = `<html><head></head><body>${notice}\n<div data-wpj-render="1"><p>ok</p></div></body></html>`;
+
+      const findings = scanBody(dom, 'https://s.test/');
+
+      expect(findings).toHaveLength(1);
+      expect(findings[0]?.text).toContain('Function alpacabot_agent was called incorrectly');
+      expect(findings[0]?.text).toContain('functions.php on line 6260');
+    });
+
+    it('is found when the page\'s own <body> tag later merged its attributes onto that element', () => {
+      // A themed page: PHP's text arrives first, the parser opens a body for it, and the
+      // template's <body class="home"> then lends that SAME element its attributes.
+      const dom = `<html><head><title>x</title></head><body class="home page" data-x="1">${notice}\n<header>site</header></body></html>`;
+
+      expect(scanBody(dom, 'https://s.test/')).toHaveLength(1);
+    });
+
+    it('still refuses prose that merely starts with a severity word after a tag', () => {
+      // The adjacency rule is what keeps this safe: no "in <path> on line <n>" follows.
+      const dom = '<html><head></head><body>Warning: this store closes early on Fridays. See the note on line 3.</body></html>';
+
+      expect(scanBody(dom, 'https://s.test/')).toEqual([]);
+    });
+  });
+
   it('reports a repeated identical diagnostic once, so a loop does not multiply it', () => {
     // A diagnostic inside a `foreach` prints once per row. They are one defect, and the key that
     // distinguishes two different diagnostics is the same one that recognises these as the same.
