@@ -232,6 +232,32 @@ describe('runAsActor', () => {
     expect(result.findings).toEqual([]);
   });
 
+  it('skips the body when the token was REFUSED and the page never left the mint URL (R54)', async () => {
+    // wpj_consume_login returns silently on a malformed, unknown, expired or already-spent
+    // token. WordPress then renders the ordinary home page AT the token URL with HTTP 200 —
+    // not a login page, not a 5xx, so no classifier reports it. The body would then sweep as an
+    // ANONYMOUS visitor, and for subscriber, contributor, author and editor every screen
+    // expects a denial, which a logged-out visitor satisfies through the login redirect. All
+    // four would report `pass` having asserted nothing about permissions at all.
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    const { agent } = fakeAgent();
+    page.navigations = [landsOn('https://s.test/?wpj_login=TOKEN')];
+    let bodyRan = false;
+
+    const result = await runAsActor(
+      browser.asBrowser(), CFG, agent, 'admin-sweep', Actor.SUBSCRIBER, 'admin',
+      async () => { bodyRan = true; return 0; },
+    );
+
+    expect(bodyRan).toBe(false);
+    expect(result.findings.at(-1)).toMatchObject({
+      kind: 'assertion', text: expect.stringContaining('could not authenticate as subscriber'),
+    });
+    // The landing IS the token URL, so a finding built from it must still be redacted (R51).
+    expect(JSON.stringify(result.findings)).not.toContain('TOKEN');
+  });
+
   it('skips the body when the mint itself failed to serve, not only when it bounced to login', async () => {
     // A 502 on the mint URL leaves the page ON the mint URL: not the login page, and not a
     // session either. Checking only for wp-login.php would let the body run unauthenticated.

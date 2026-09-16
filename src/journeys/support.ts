@@ -21,6 +21,7 @@ import { isAnonymous, type Actor } from '../actors/roles.ts';
 import type { AgentClient } from '../agent/client.ts';
 import type { Config } from '../config.ts';
 import { messageOf } from '../errors.ts';
+import { redactLoginToken } from '../sentinel/classify.ts';
 import type { Finding } from '../sentinel/phplog.ts';
 import { installSentinel, type Sentinel } from '../sentinel/sentinel.ts';
 import type { JourneyResult, SurfaceAxis } from './index.ts';
@@ -31,6 +32,26 @@ export type JourneyBody = (page: Page, sentinel: Sentinel) => Promise<number>;
 /** A journey's own check that failed, as opposed to something the sentinel observed. */
 function assertionFinding(text: string): Finding {
   return { kind: 'assertion', text };
+}
+
+/** The page's URL, which is itself unreadable once the page has closed. */
+function currentUrl(page: Page): string {
+  try {
+    return page.url();
+  } catch {
+    return '<the page could not be asked where it was>';
+  }
+}
+
+/**
+ * A settled URL still carrying the mint's token, which is what a REFUSED token leaves behind.
+ *
+ * Spending a token always redirects away from it, so this is decided without any assumption
+ * about where a real session ought to end up — which is the whole point: the landing check R52
+ * removed was wrong precisely because it made one.
+ */
+function stillHoldingToken(url: string): boolean {
+  return /[?&]wpj_login=/i.test(url);
 }
 
 /**
@@ -68,6 +89,22 @@ async function authenticate(
         // The verdict's own text, which `classifyNavigation` already redacted (R51) — the
         // landing may still BE the token URL.
         `no session was established: ${verdict.map((finding) => finding.text).join('; ')}`,
+      );
+    }
+    // R54: a refused token used to be SILENT, and silence here is the worst failure this runner
+    // has. WordPress renders the ordinary home page AT the token URL with HTTP 200 — not a login
+    // page, not a 5xx, so the verdict above is empty and this reads as a success. The body then
+    // sweeps as an ANONYMOUS visitor, and for every role below administrator each screen expects
+    // a denial, which a logged-out visitor satisfies through the login redirect. Four of the six
+    // sweeps would report `pass` having asserted nothing at all.
+    //
+    // The agent now wp_die()s on a refused token, which the verdict catches. This stays because
+    // the runner must not depend on the agent version it happens to be talking to, and because
+    // the cost of being wrong here is a green run that proved nothing.
+    const landed = currentUrl(page);
+    if (stillHoldingToken(landed)) {
+      throw new Error(
+        `the minted token was refused — the page never left ${redactLoginToken(landed)}`,
       );
     }
   } catch (error) {
