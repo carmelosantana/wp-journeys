@@ -71,14 +71,18 @@ export interface Manifest {
 
 const SURFACES: readonly SurfaceAxis[] = ['admin', 'frontend', 'both'];
 
+/*
+ * The accepted keys, exported so the authoring skill can be checked against them
+ * (tests/skills-content.test.ts): a key the skill never mentions is one an author cannot find.
+ */
 /** `$schema` is for editor completion and `description` stands in for the comments JSON lacks. */
-const MANIFEST_KEYS = ['$schema', 'description', 'version', 'plugin', 'gate', 'deprecated', 'journeys'];
+export const MANIFEST_KEYS = ['$schema', 'description', 'version', 'plugin', 'gate', 'deprecated', 'journeys'] as const;
 const GATE_KEYS = ['screen'];
 const DEPRECATED_KEYS = ['shortcodes'];
-const JOURNEY_KEYS = ['name', 'actor', 'surface', 'screens', 'settings', 'shortcodes', 'module'];
-const SCREEN_KEYS = ['url', 'allow', 'deny'];
-const SETTING_KEYS = ['url', 'field', 'value', 'readBack'];
-const OPTIONAL_SETTING_KEYS = ['submit'];
+export const JOURNEY_KEYS = ['name', 'actor', 'surface', 'screens', 'settings', 'shortcodes', 'module'] as const;
+export const SCREEN_KEYS = ['url', 'allow', 'deny'] as const;
+export const SETTING_KEYS = ['url', 'field', 'value', 'readBack'] as const;
+export const OPTIONAL_SETTING_KEYS = ['submit'] as const;
 
 type Fail = (message: string) => never;
 
