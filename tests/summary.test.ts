@@ -46,7 +46,9 @@ describe('renderSummary', () => {
   });
 
   it('counts a `both` journey toward each half of the surface axis', () => {
-    const both: JourneyResult = { ...pass, name: 'shortcode-render:acme', surface: 'both' };
+    // A manifest settings round-trip writes in wp-admin and reads back on the frontend: a
+    // journey that genuinely spans both halves. (The render journeys are frontend-only now.)
+    const both: JourneyResult = { ...pass, name: 'acme-settings-round-trip', surface: 'both' };
     const out = renderSummary([both]);
     expect(out).toContain('admin: 1 of 1');
     expect(out).toContain('frontend: 1 of 1');
@@ -73,7 +75,7 @@ describe('renderSummary', () => {
   });
 
   it('shows a run of nothing but skips as zero coverage on both halves', () => {
-    const both: JourneyResult = { ...skip, name: 'shortcode-render:acme', surface: 'both' };
+    const both: JourneyResult = { ...skip, name: 'acme-settings-round-trip', surface: 'both' };
     const out = renderSummary([skip, both]);
 
     expect(out).toContain('admin: 0 of 2');

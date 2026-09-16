@@ -62,8 +62,22 @@ wpj_assert('an unknown function is not core', false, wpj_callback_is_core('wpj_t
 wpj_assert('an unknown method is not core', false, wpj_callback_is_core(array('WPJ_T_Core', 'nope'), $core_dirs));
 wpj_assert('a PHP built-in has no file, so is not core', false, wpj_callback_is_core('strlen', $core_dirs));
 wpj_assert('a non-callable shape is not core', false, wpj_callback_is_core(42, $core_dirs));
+// A REAL sibling directory whose name prefixes the core one. If it did not exist, realpath()
+// would return false and the test would pass without ever reaching the separator guard.
+$sibling_root = sys_get_temp_dir() . '/wpj-sibling-' . getmypid();
+@mkdir($sibling_root . '/wp-incl', 0777, true);
+@mkdir($sibling_root . '/wp-includes', 0777, true);
+file_put_contents($sibling_root . '/wp-includes/sibling-callback.php', "<?php\nfunction wpj_t_sibling_fn() {}\n");
+require $sibling_root . '/wp-includes/sibling-callback.php';
+wpj_assert('precondition: the sibling directory really exists', true, is_dir($sibling_root . '/wp-incl'));
 wpj_assert('a sibling directory sharing the prefix is not core', false,
-    wpj_callback_is_core('wpj_t_core_fn', array($fake . '/wp-incl')));
+    wpj_callback_is_core('wpj_t_sibling_fn', array($sibling_root . '/wp-incl')));
+wpj_assert('the same file IS core under its own directory', true,
+    wpj_callback_is_core('wpj_t_sibling_fn', array($sibling_root . '/wp-includes')));
+unlink($sibling_root . '/wp-includes/sibling-callback.php');
+rmdir($sibling_root . '/wp-includes');
+rmdir($sibling_root . '/wp-incl');
+rmdir($sibling_root);
 
 $by_hook = array(
     'core_only' => array('wpj_t_core_fn', array('WPJ_T_Core', 'stat')),
@@ -82,5 +96,11 @@ wpj_assert('a single-file plugin is active', true, wpj_plugin_slug_active('hello
 wpj_assert('a slug that only prefixes another is not active', false, wpj_plugin_slug_active('acme', array('acme-pro/acme-pro.php')));
 wpj_assert('an absent plugin is not active', false, wpj_plugin_slug_active('acme', array()));
 wpj_assert('a non-array option is read as nothing active', false, wpj_plugin_slug_active('acme', false));
+
+// The field is OMITTED when no plugin was asked about: absent means unknown to the runner, and
+// `false` would claim the plugin is known to be inactive.
+wpj_assert('no slug, no pluginActive field', array(), wpj_plugin_active_field('', array('acme/acme.php')));
+wpj_assert('a slug reports its state', array('pluginActive' => true), wpj_plugin_active_field('acme', array('acme/acme.php')));
+wpj_assert('an inactive slug reports false', array('pluginActive' => false), wpj_plugin_active_field('acme', array()));
 
 wpj_assert_exit();
