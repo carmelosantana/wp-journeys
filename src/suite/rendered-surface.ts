@@ -89,8 +89,13 @@ export function adminSweep(plugin: string, delta: Surface, actor: Actor): Journe
   };
 }
 
+/** The frontend URL that renders `[tag]` through the agent's render endpoint. */
+export function shortcodeRenderUrl(tag: string): string {
+  return `/?wpj_render=${encodeURIComponent(`[${tag}]`)}`;
+}
+
 /**
- * Render every shortcode the plugin added, on the front end, as an administrator.
+ * Why a render of `[tag]` proved nothing, or `null` when it expanded.
  *
  * The render itself is not the assertion (R5). If the agent's guard refused, `?wpj_render=`
  * serves the ordinary home page with a perfectly good 200 and the journey would pass having
@@ -98,7 +103,23 @@ export function adminSweep(plugin: string, delta: Surface, actor: Actor): Journe
  *  - `[data-wpj-render]` is present, which only the agent's endpoint emits — the proof it ran;
  *  - the literal `[tag]` is gone, which is the proof the shortcode EXPANDED. WordPress returns
  *    an unregistered shortcode verbatim, so a tag that never registered reads as its own text.
+ *
+ * Pure, and shared with the manifest interpreter so a manifest's shortcodes are held to the
+ * same proof as the discovered ones.
  */
+export function shortcodeRenderDefect(html: string, tag: string): string | null {
+  if (!html.includes('data-wpj-render')) {
+    return `rendering [${tag}] produced no wp-journeys render marker — the agent's render `
+      + 'endpoint did not run, so nothing about this shortcode was actually asserted';
+  }
+  if (html.includes(`[${tag}]`)) {
+    return `the shortcode [${tag}] came back verbatim — WordPress returns an unregistered `
+      + 'shortcode unchanged, so it never expanded';
+  }
+  return null;
+}
+
+/** Render every shortcode the plugin added, on the front end, as an administrator. */
 export function shortcodeRender(plugin: string, delta: Surface): Journey {
   const name = `shortcode-render:${plugin}`;
   return {
@@ -112,20 +133,9 @@ export function shortcodeRender(plugin: string, delta: Surface): Journey {
       return runAsActor(browser, cfg, agent, name, Actor.ADMINISTRATOR, 'both', async (page, sentinel) => {
         // Render through the front end so the shortcode runs in its real context.
         for (const tag of delta.shortcodes) {
-          await sentinel.visit(page, `/?wpj_render=${encodeURIComponent(`[${tag}]`)}`);
-          const html = await page.content();
-          if (!html.includes('data-wpj-render')) {
-            throw new Error(
-              `rendering [${tag}] produced no wp-journeys render marker — the agent's render `
-                + 'endpoint did not run, so nothing about this shortcode was actually asserted',
-            );
-          }
-          if (html.includes(`[${tag}]`)) {
-            throw new Error(
-              `the shortcode [${tag}] came back verbatim — WordPress returns an unregistered `
-                + 'shortcode unchanged, so it never expanded',
-            );
-          }
+          await sentinel.visit(page, shortcodeRenderUrl(tag));
+          const defect = shortcodeRenderDefect(await page.content(), tag);
+          if (defect) throw new Error(defect);
         }
         return 0;
       });
