@@ -44,4 +44,10 @@ describe('the MCP tool surface', () => {
     expect(TOOLS.navigate?.inputSchema.required).toEqual(['path']);
     expect(TOOLS.navigate?.inputSchema.properties.expect_denied?.type).toBe('boolean');
   });
+
+  it('says session findings are not baseline-subtracted, where a session\'s findings are returned (M4)', () => {
+    expect(TOOLS.drain_sentinel?.description).toMatch(/not baseline-subtracted/);
+    expect(TOOLS.login_as?.description).toMatch(/not baseline-subtracted/);
+    expect(TOOLS.run_journey?.description).toMatch(/held session/);
+  });
 });

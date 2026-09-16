@@ -162,6 +162,43 @@ export function createMcpServer(deps: McpDeps) {
     return lines;
   }
 
+  /** One journey, run as `wpj run` would run it (R88). The caller has already retired any session. */
+  async function runOneJourney(args: Record<string, unknown>): Promise<ToolResult> {
+    const { name, plugin } = args;
+    if (typeof name !== 'string' || name === '') throw new Error('name must be a non-empty string');
+    if (typeof plugin !== 'string') throw new Error('plugin must be a string');
+    // The CLI's own slug rule, applied the CLI's own way: the slug reaches a shell.
+    const parsed = parseArgs(['run', '--plugin', plugin]);
+    if (!parsed.ok) throw new Error(parsed.reason);
+
+    const { cfg, agent } = configured();
+    const wp = deps.env.WPJ_WP;
+    if (!wp) throw new Error('WPJ_WP is not set — the runner needs a wp-cli command to toggle the plugin.');
+
+    // Everything below that refuses does so BEFORE the baseline touches the site.
+    const plan = await manifestPlan(deps.env, plugin);
+    const shape = suiteShape(plugin, plan);
+    if (!Object.hasOwn(shape, name)) {
+      throw new Error(`no journey named ${JSON.stringify(name)} for ${plugin} — known: ${Object.keys(shape).join(', ')}`);
+    }
+    const refusal = `${name} uninstalls the plugin under test, which a tool call must not do as a side effect — `
+      + `run it with \`wpj run --plugin ${plugin}\``;
+    if (shape[name]!.uninstallsPlugin) throw new Error(refusal);
+
+    const actions = siteActions(wp, plugin, deps.runShell);
+    const prepared = await prepareSuite(agent, cfg, plugin, plan, {
+      ...actions,
+      // Unreachable for any journey that declares it uninstalls; a hard stop for one that does not.
+      uninstall: async () => { throw new Error(refusal); },
+    }, deps.fetchImpl);
+    const journey = prepared.suite[name];
+    if (journey === undefined || journey.uninstallsPlugin) throw new Error(refusal);
+
+    const [result] = await runSuite(register(journey), await launched(), cfg, agent, prepared.baseline);
+    const outcome = outcomeOf(result!);
+    return { isError: outcome === 'fail', text: `outcome: ${outcome}\n${renderJourney(result!)}` };
+  }
+
   const handlers: Record<string, Handler> = {
     async status() {
       const { agent } = configured();
@@ -256,39 +293,17 @@ export function createMcpServer(deps: McpDeps) {
     },
 
     async run_journey(args) {
-      const { name, plugin } = args;
-      if (typeof name !== 'string' || name === '') throw new Error('name must be a non-empty string');
-      if (typeof plugin !== 'string') throw new Error('plugin must be a string');
-      // The CLI's own slug rule, applied the CLI's own way: the slug reaches a shell.
-      const parsed = parseArgs(['run', '--plugin', plugin]);
-      if (!parsed.ok) throw new Error(parsed.reason);
-
-      const { cfg, agent } = configured();
-      const wp = deps.env.WPJ_WP;
-      if (!wp) throw new Error('WPJ_WP is not set — the runner needs a wp-cli command to toggle the plugin.');
-
-      // Everything below that refuses does so BEFORE the baseline touches the site.
-      const plan = await manifestPlan(deps.env, plugin);
-      const shape = suiteShape(plugin, plan);
-      if (!Object.hasOwn(shape, name)) {
-        throw new Error(`no journey named ${JSON.stringify(name)} for ${plugin} — known: ${Object.keys(shape).join(', ')}`);
+      // A held session is retired FIRST (M4): its sentinel's log window would otherwise take in
+      // the baseline and the run, and attribute their lines to the held actor — unsubtracted.
+      // Its findings travel with this result, whatever the result is (R85).
+      const previous = await retire();
+      let result: ToolResult;
+      try {
+        result = await runOneJourney(args);
+      } catch (error) {
+        result = { isError: true, text: messageOf(error) };
       }
-      const refusal = `${name} uninstalls the plugin under test, which a tool call must not do as a side effect — `
-        + `run it with \`wpj run --plugin ${plugin}\``;
-      if (shape[name]!.uninstallsPlugin) throw new Error(refusal);
-
-      const actions = siteActions(wp, plugin, deps.runShell);
-      const prepared = await prepareSuite(agent, cfg, plugin, plan, {
-        ...actions,
-        // Unreachable for any journey that declares it uninstalls; a hard stop for one that does not.
-        uninstall: async () => { throw new Error(refusal); },
-      }, deps.fetchImpl);
-      const journey = prepared.suite[name];
-      if (journey === undefined || journey.uninstallsPlugin) throw new Error(refusal);
-
-      const [result] = await runSuite(register(journey), await launched(), cfg, agent, prepared.baseline);
-      const outcome = outcomeOf(result!);
-      return { isError: outcome === 'fail', text: `outcome: ${outcome}\n${renderJourney(result!)}` };
+      return { ...result, text: [result.text, ...previous].join('\n') };
     },
   };
 

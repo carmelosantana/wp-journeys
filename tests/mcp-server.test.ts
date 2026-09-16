@@ -709,6 +709,42 @@ describe('run_journey (R88)', () => {
     expect(text).toMatch(/HTTP 502/);
   });
 
+  it('retires a held session FIRST, so its window never takes in the run, and reports its findings (M4)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    h.page.navigations = [() => response(502, 'https://s.test/held')];
+    await call(server, 'navigate', { path: '/held' });
+    // Whether the held context was already closed when each wp-cli command ran: it must be
+    // retired before the baseline's deactivate, not after the run.
+    const heldClosedAtShell: boolean[] = [];
+    h.deps.runShell = async (command) => { heldClosedAtShell.push(h.browser.closed[0] === true); h.shell.push(command); };
+
+    const { text, isError } = await call(server, 'run_journey', { name: 'frontend-renders', plugin: 'acme' });
+
+    expect(isError).toBe(false);
+    expect(text).toMatch(/^outcome: pass$/m);
+    expect(text).toMatch(/previous session \(anonymous\)[^\n]*1 finding/);
+    expect(text).toMatch(/HTTP 502/);
+    expect(heldClosedAtShell).toEqual([true, true]);
+    expect((await call(server, 'drain_sentinel')).text).toMatch(/call login_as first/);
+  });
+
+  it('reports the retired session\'s findings on a refusal too (M4)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    h.page.navigations = [() => response(502, 'https://s.test/held')];
+    await call(server, 'navigate', { path: '/held' });
+
+    const { text, isError } = await call(server, 'run_journey', { name: 'lifecycle:acme', plugin: 'acme' });
+
+    expect(isError).toBe(true);
+    expect(text).toMatch(/uninstalls the plugin under test/);
+    expect(text).toMatch(/previous session \(anonymous\)[^\n]*1 finding/);
+    expect(h.shell).toEqual([]);
+  });
+
   it('subtracts the baseline\'s per-request noise before deciding, as wpj run does (R45)', async () => {
     const noise = '[16-Sep-2026 10:00:00 UTC] PHP Deprecated:  Creation of dynamic property Acme::$x is deprecated in /wp-content/themes/t/functions.php on line 1';
     let offset = 0;

@@ -28,7 +28,8 @@ export const TOOLS: Record<string, ToolDefinition> = {
   },
   login_as: {
     description: 'Open an isolated browser context as one of the six actors, with the sentinel armed. Anonymous does not log in. '
-      + 'Only one session is held: a previous session is drained first, and its findings are returned here.',
+      + 'Only one session is held: a previous session is drained first, and its findings are returned here. '
+      + 'Session findings are not baseline-subtracted: noise the site emits on every request is reported too.',
     inputSchema: {
       type: 'object',
       properties: { actor: { type: 'string', description: 'Which actor to become.', enum: ALL_ACTORS } },
@@ -55,13 +56,15 @@ export const TOOLS: Record<string, ToolDefinition> = {
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   drain_sentinel: {
-    description: 'Collect every finding observed so far, including the PHP debug.log delta. Empty means clean.',
+    description: 'Collect every finding observed so far, including the PHP debug.log delta. Empty means clean. '
+      + 'Findings are not baseline-subtracted: noise the site emits on every request is reported too.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   run_journey: {
     description: 'Run one registered journey by name and return its result, including its pass/fail/skip outcome. '
       + 'This captures the run baseline exactly as `wpj run` does: it deactivates and then reactivates the plugin under '
-      + 'test, so the plugin is left active. lifecycle journeys uninstall the plugin and are refused — use `wpj run`.',
+      + 'test, so the plugin is left active. lifecycle journeys uninstall the plugin and are refused — use `wpj run`. '
+      + 'A held session is drained and closed first, and its findings are returned with the result.',
     inputSchema: {
       type: 'object',
       properties: {
