@@ -27,7 +27,7 @@ Put `wp-journeys.json` in any directory of the plugin, for example `tests/e2e/`,
 | Journey field | Meaning |
 |---|---|
 | `name`, `actor`, `surface` | `actor` is one of `anonymous`, `subscriber`, `contributor`, `author`, `editor`, `administrator`. `surface` is `admin`, `frontend` or `both`. |
-| `screens[]` | `{url, allow, deny}`. The journey's actor must appear in **exactly one** of the two lists. `deny` means a 401, a 403 or the login redirect is the pass. |
+| `screens[]` | `{url, allow, deny}`. The journey's actor must appear in **exactly one** of the two lists. `deny` means a 401 or a 403 is the pass, or, for `anonymous` only, the login redirect. |
 | `settings[]` | `{url, field, value, readBack, submit?}`. The runner writes `value` plus a fresh `wpj-<8 hex>` suffix into `field` on `url`, submits once, and then requires that exact text to be **absent** at `readBack` before the write and **visible** there after it. |
 | `settings[].submit` | A CSS selector for the control to click, once. Without it the runner presses Enter, which never submits a `<textarea>`. |
 | `shortcodes[]` | Tags rendered through the agent's render door. A tag must expand; a tag returned unchanged fails the journey. |
@@ -35,13 +35,13 @@ Put `wp-journeys.json` in any directory of the plugin, for example `tests/e2e/`,
 
 Every step-based journey for a logged-in actor first visits `/wp-admin/profile.php` as a control. The visit must be served, which proves the session is real before any denial is believed. A module gets no control visit unless it makes one.
 
-Every schema problem is refused loudly, by name. Fix the message; never work around it.
+Every schema problem is refused loudly, by name. Fix the message; never work around it. Every `url` and `readBack` must be a path on the target site that starts with exactly one `/`; a full URL or a protocol-relative `//host/` is refused when the manifest is read.
 
 ## Common mistakes
 
 | Mistake | Fix |
 |---|---|
-| Expecting `deny` to be satisfied by a 404 or a 5xx | Only a 401, a 403 or the login redirect counts as a denial. A 404 means the URL is wrong, and the journey fails. |
+| Expecting `deny` to be satisfied by a 404 or a 5xx | Only a 401 or a 403 counts as a denial (and the login redirect, for `anonymous` only). A 404 means the URL is wrong, and the journey fails. |
 | `readBack` pointing at a page that never shows the setting | Point it at a frontend URL that renders the value, e.g. `/?wpj_render=%5Btag%5D`. Write it unsigned: the runner signs a render-door path for you at each visit. |
 | A `readBack` page that already shows the written text | The journey fails before it writes anything, because the text appearing afterwards would prove nothing. |
 | A module that calls `browser.newPage()` itself | Use `runAsActor`. Without it no sentinel is armed and no session is proven. |
