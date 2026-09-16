@@ -34,6 +34,7 @@ import { captureBaseline } from '../../src/suite/baseline.ts';
 import { conformanceSurface } from '../../src/suite/index.ts';
 import { lifecycle } from '../../src/suite/lifecycle.ts';
 import { adminSweep, blockRender, shortcodeRender } from '../../src/suite/rendered-surface.ts';
+import { shortcodeRenderDefect, shortcodeRenderUrl } from '../../src/agent/render.ts';
 
 const PLUGIN = 'wpj-fixture';
 /** The ONE site these proofs may mutate. They uninstall a plugin and delete a cron event. */
@@ -233,6 +234,29 @@ test('a shortcode that never registered goes red, rather than passing on a 200 (
   expect(outcomeOf(result), detail(result)).toBe('fail');
   expect(JSON.stringify(result.findings)).toContain('came back verbatim');
 });
+
+/**
+ * The render door's gate lets through characters an attribute could use ('"', a no-break space).
+ * What keeps them from reaching a registered shortcode AS an attribute is core's exact-name
+ * pre-filter, which is WordPress's behaviour, not ours — so it is proven here, on the live site.
+ */
+for (const [label, tag, expected] of [
+  ['a double quote', 'wpj_fixture"x', 'came back verbatim'],
+  ['a no-break space', 'wpj_fixture\u00a0x', 'came back verbatim'],
+  ['an ASCII space (refused by the gate itself)', 'wpj_fixture x', 'produced no wp-journeys render marker'],
+] as const) {
+  test(`a registered tag followed by ${label} is never run with an attribute`, async () => {
+    const result = await runAsActor(browser, cfg, agent, `lookalike:${label}`, Actor.ANONYMOUS, 'frontend', async (page, sentinel) => {
+      await sentinel.visit(page, shortcodeRenderUrl(tag));
+      const defect = shortcodeRenderDefect(await page.content(), tag);
+      if (defect) throw new Error(defect);
+      return 0;
+    });
+
+    expect(outcomeOf(result), detail(result)).toBe('fail');
+    expect(JSON.stringify(result.findings)).toContain(expected);
+  });
+}
 
 for (const actor of [Actor.ADMINISTRATOR, Actor.ANONYMOUS]) {
   test(`every block the plugin added renders through the front end, as ${actor} (R57, R77)`, async () => {

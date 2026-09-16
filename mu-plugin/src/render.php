@@ -30,8 +30,13 @@ function wpj_render_payload_allowed($raw) {
     }
     // The tag class is core's own (wp-includes/shortcodes.php:75 refuses @[<>&/\[\]\x00-\x20=]@),
     // widened at first contact from [A-Za-z0-9_-], which refused legal tags like [my.tag] and
-    // failed their render as the plugin's defect. It still cannot carry markup (<, >, &) or an
-    // attribute (whitespace, =), so the payload stays one bare tag.
+    // failed their render as the plugin's defect. It cannot carry markup (<, >, &), an ASCII
+    // space or '='. It CAN carry other characters an attribute might use — '"', "'", a
+    // non-breaking space — so this gate alone does not keep attributes out. What does is core's
+    // exact-name pre-filter: do_shortcode() collects the whole bracketed name with that same class
+    // and runs only names registered VERBATIM, so "[acme\xC2\xA0x]" or '[acme"x]' is not "[acme]"
+    // with an attribute but an unregistered name, returned unchanged (and escaped by nothing, which
+    // is why markup stays refused here). tests/e2e/conformance.spec.ts proves it live.
     return preg_match('/\A\[[^<>&\/\[\]\x00-\x20=]+\]\z/', $raw) === 1;
 }
 
