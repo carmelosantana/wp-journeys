@@ -1,0 +1,371 @@
+import type { Page } from '@playwright/test';
+import { describe, expect, it } from 'vitest';
+
+import type { AgentClient, LogDelta } from '../src/agent/client.ts';
+import { installSentinel } from '../src/sentinel/sentinel.ts';
+
+type Handler = (arg: never) => unknown;
+
+/** A response as the sentinel reads one: status and final URL, both synchronous. */
+function response(status: number, url: string): never {
+  return { status: () => status, url: () => url } as never;
+}
+
+/** A console message as the sentinel reads one. */
+function consoleMessage(type: string, text: string, url = 'https://s.test/app.js'): never {
+  return { type: () => type, text: () => text, location: () => ({ url }) } as never;
+}
+
+/**
+ * A failed request. `response()` is a PROMISE in Playwright, which is the whole point of the
+ * async handler — comparing the promise itself to null makes every failure look benign.
+ */
+function failedRequest(url: string, errorText: string, had: unknown = null): never {
+  return { url: () => url, failure: () => ({ errorText }), response: async () => had } as never;
+}
+
+/**
+ * The slice of Playwright's Page the sentinel touches. `emit` does NOT await its handlers,
+ * exactly as Playwright's emitter does not — so a handler that needs a round trip must be
+ * waited for by `drain()`, not by luck.
+ */
+class FakePage {
+  readonly handlers: Record<string, Handler[]> = {};
+  readonly gotos: string[] = [];
+  readonly loadStates: string[] = [];
+  /** What each successive goto does; a 200 on the requested URL once the queue runs out. */
+  navigations: Array<() => unknown> = [];
+  body = '<html><body>ok</body></html>';
+  current = 'https://s.test/';
+
+  on(event: string, handler: Handler): void {
+    (this.handlers[event] ??= []).push(handler);
+  }
+
+  emit(event: string, arg: unknown): void {
+    for (const handler of this.handlers[event] ?? []) void handler(arg as never);
+  }
+
+  async goto(url: string): Promise<unknown> {
+    this.gotos.push(url);
+    const step = this.navigations.shift();
+    return step ? step() : response(200, url);
+  }
+
+  url(): string {
+    return this.current;
+  }
+
+  async content(): Promise<string> {
+    return this.body;
+  }
+
+  async waitForLoadState(state: string): Promise<void> {
+    this.loadStates.push(state);
+  }
+
+  asPage(): Page {
+    return this as unknown as Page;
+  }
+}
+
+/** Only `logDelta` is exercised; any other call is a bug worth hearing about. */
+function fakeAgent(deltas: LogDelta[]) {
+  const calls: Array<number | 'end'> = [];
+  const agent = new Proxy({}, {
+    get(_target, property: string) {
+      if (property !== 'logDelta') {
+        throw new Error(`the sentinel must not call agent.${property}()`);
+      }
+      return async (offset: number | 'end') => {
+        calls.push(offset);
+        return deltas.shift() ?? { offset: 4096, lines: [], available: true };
+      };
+    },
+  }) as AgentClient;
+  return { agent, calls };
+}
+
+const CLEAN: LogDelta = { offset: 100, lines: [], available: true };
+
+/** A page plus a sentinel already baselined on a healthy log. */
+async function setup(deltas: LogDelta[] = []) {
+  const page = new FakePage();
+  const { agent, calls } = fakeAgent([CLEAN, ...deltas]);
+  const sentinel = await installSentinel(page.asPage(), agent);
+  return { page, sentinel, calls };
+}
+
+describe('installSentinel', () => {
+  it('baselines with a size-only logDelta("end"), never logDelta(0)', async () => {
+    // logDelta(0) would pull the entire debug.log back over HTTP just to learn a length, and
+    // on a long-lived dev site that is megabytes read to discover a starting offset (R33).
+    const { calls } = await setup();
+    expect(calls).toEqual(['end']);
+  });
+
+  it('reports nothing for a clean visit', async () => {
+    const { page, sentinel } = await setup([CLEAN]);
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/');
+
+    expect(await sentinel.drain()).toEqual([]);
+    expect(page.loadStates).toEqual(['networkidle']);
+  });
+
+  it('returns a copy, so a caller cannot edit what the sentinel has seen', async () => {
+    const { page, sentinel } = await setup();
+    page.emit('response', response(500, 'https://s.test/x'));
+
+    const first = await sentinel.drain();
+    first.length = 0;
+
+    expect(await sentinel.drain()).toHaveLength(1);
+  });
+});
+
+describe('sentinel.visit', () => {
+  it('asserts the main document status, which nothing else in the browser surfaces', async () => {
+    const { page, sentinel } = await setup();
+    page.navigations = [() => response(502, 'https://s.test/wp-admin/')];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/');
+
+    expect(await sentinel.drain()).toMatchObject([{ kind: 'response', status: 502 }]);
+  });
+
+  it('classifies against the response FINAL url, so a login redirect is visible', async () => {
+    const { page, sentinel } = await setup();
+    const landed = 'https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F';
+    page.navigations = [() => response(200, landed)];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/');
+
+    const [finding] = await sentinel.drain();
+    expect(finding?.url).toBe(landed);
+    expect(finding?.text).toContain('the actor is not authenticated');
+  });
+
+  it('passes a denial served as a login redirect once the journey declares it', async () => {
+    const { page, sentinel } = await setup();
+    sentinel.expect({ denyExpected: true });
+    page.navigations = [() => response(200, 'https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F')];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/');
+
+    expect(await sentinel.drain()).toEqual([]);
+  });
+
+  it('reports a 5xx main document once, not twice', async () => {
+    // The listener and visit() both see the document. De-duplicated on status + url (R1).
+    const { page, sentinel } = await setup();
+    page.navigations = [() => {
+      page.emit('response', response(500, 'https://s.test/wp-admin/'));
+      return response(500, 'https://s.test/wp-admin/');
+    }];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/');
+
+    expect(await sentinel.drain()).toHaveLength(1);
+  });
+
+  it('retries once on a benign network fault, which this runner provokes itself', async () => {
+    const { page, sentinel } = await setup();
+    page.navigations = [
+      () => { throw new Error('page.goto: net::ERR_NETWORK_CHANGED at https://s.test/wp-admin/'); },
+      () => response(200, 'https://s.test/wp-admin/'),
+    ];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/');
+
+    expect(page.gotos).toHaveLength(2);
+    expect(await sentinel.drain()).toEqual([]);
+  });
+
+  it('does not retry a real navigation failure, and does not swallow it', async () => {
+    const { page, sentinel } = await setup();
+    page.navigations = [
+      () => { throw new Error('page.goto: net::ERR_CONNECTION_REFUSED at https://s.test/wp-admin/'); },
+    ];
+
+    await expect(sentinel.visit(page.asPage(), 'https://s.test/wp-admin/'))
+      .rejects.toThrow('ERR_CONNECTION_REFUSED');
+    expect(page.gotos).toHaveLength(1);
+  });
+
+  it('flags a navigation that produced no response instead of silently asserting nothing', async () => {
+    const { page, sentinel } = await setup();
+    page.navigations = [() => null];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/');
+
+    const [finding] = await sentinel.drain();
+    expect(finding?.text).toContain('produced no response');
+    expect(finding?.url).toBe('https://s.test/wp-admin/');
+  });
+
+  it('refuses a page it was not installed on, whose three live listeners are not attached', async () => {
+    const { sentinel } = await setup();
+    const stranger = new FakePage();
+
+    await expect(sentinel.visit(stranger.asPage(), 'https://s.test/wp-admin/'))
+      .rejects.toThrow(/installed on/);
+    expect(stranger.gotos).toEqual([]);
+  });
+});
+
+describe('the live listeners', () => {
+  it('ignores a subresource 404 and flags a subresource 5xx', async () => {
+    const { page, sentinel } = await setup();
+    page.emit('response', response(404, 'https://s.test/favicon.ico'));
+    page.emit('response', response(500, 'https://s.test/wp-admin/admin-ajax.php'));
+
+    expect((await sentinel.drain()).map((f) => f.url))
+      .toEqual(['https://s.test/wp-admin/admin-ajax.php']);
+  });
+
+  it('records a console error with the location that produced it', async () => {
+    const { page, sentinel } = await setup();
+    page.emit('console', consoleMessage('error', 'Uncaught TypeError: x is not a function'));
+    page.emit('console', consoleMessage('warning', 'a deprecation notice'));
+
+    expect(await sentinel.drain()).toMatchObject([
+      { kind: 'console', url: 'https://s.test/app.js' },
+    ]);
+  });
+
+  it('awaits request.response(), which is a promise — comparing it to null hides every failure', async () => {
+    // `request.response() !== null` is always true: a Promise is never null. That one slip
+    // turns the requestfailed signal off entirely while leaving it looking wired up.
+    const { page, sentinel } = await setup();
+    page.emit('requestfailed', failedRequest('https://s.test/app.js', 'net::ERR_CONNECTION_REFUSED'));
+
+    expect(await sentinel.drain()).toMatchObject([
+      { kind: 'requestfailed', url: 'https://s.test/app.js' },
+    ]);
+  });
+
+  it('ignores an abort that did receive a response — a benign body-drain', async () => {
+    const { page, sentinel } = await setup();
+    page.emit('requestfailed', failedRequest('https://s.test/x', 'net::ERR_ABORTED', response(200, '/x')));
+
+    expect(await sentinel.drain()).toEqual([]);
+  });
+
+  it('says so when a failed request could not be inspected at all', async () => {
+    const { page, sentinel } = await setup();
+    page.emit('requestfailed', {
+      url: () => 'https://s.test/x',
+      failure: () => ({ errorText: 'net::ERR_FAILED' }),
+      response: async () => { throw new Error('Target page closed'); },
+    });
+
+    expect(await sentinel.drain()).toMatchObject([
+      { kind: 'requestfailed', url: 'https://s.test/x' },
+    ]);
+    expect((await sentinel.drain())[0]?.text).toContain('could not be classified');
+  });
+});
+
+describe('sentinel.drain', () => {
+  it('scans the rendered body for a diagnostic that came back as HTTP 200', async () => {
+    const { page, sentinel } = await setup();
+    page.current = 'https://s.test/wp-admin/';
+    page.body = '<br />\n<b>Warning</b>:  Undefined variable $x in <b>/acme.php</b> on line <b>7</b><br />';
+
+    expect(await sentinel.drain()).toMatchObject([
+      { kind: 'bodyscan', url: 'https://s.test/wp-admin/' },
+    ]);
+  });
+
+  it('says so when the body could not be read, rather than quietly scanning nothing', async () => {
+    const { page, sentinel } = await setup();
+    page.content = async () => { throw new Error('Target page closed'); };
+
+    const findings = await sentinel.drain();
+
+    expect(findings).toMatchObject([{ kind: 'bodyscan' }]);
+    expect(findings[0]?.text).toContain('could not be read');
+  });
+
+  it('still reads the log after an unreadable body — one lost signal must not lose the rest', async () => {
+    const { page, sentinel } = await setup([
+      { offset: 200, lines: ['[15-Sep-2026 22:40:00 UTC] PHP Warning:  boom in /x.php on line 1'], available: true },
+    ]);
+    page.content = async () => { throw new Error('Target page closed'); };
+
+    expect((await sentinel.drain()).map((f) => f.kind)).toEqual(['bodyscan', 'phplog']);
+  });
+
+  it('classifies the debug.log lines written during the window', async () => {
+    const { sentinel, calls } = await setup([{
+      offset: 260,
+      lines: [
+        '[15-Sep-2026 22:40:00 UTC] PHP Warning:  boom in /x.php on line 1',
+        '[15-Sep-2026 22:40:00 UTC] Automatic updates starting...',
+      ],
+      available: true,
+    }]);
+
+    expect((await sentinel.drain()).map((f) => f.text))
+      .toEqual(['PHP Warning: boom in /x.php on line 1']);
+    expect(calls).toEqual(['end', 100]);
+  });
+
+  it('advances the offset, so the next window is not the previous one again', async () => {
+    const { sentinel, calls } = await setup([
+      { offset: 260, lines: [], available: true },
+      { offset: 300, lines: [], available: true },
+    ]);
+
+    await sentinel.drain();
+    await sentinel.drain();
+
+    expect(calls).toEqual(['end', 100, 260]);
+  });
+
+  it('reports a lost log signal and re-baselines with "end", never feeding the echoed offset back', async () => {
+    // A lost read only echoes the offset it was sent, so feeding it forward would re-read an
+    // old window and attribute its contents to the wrong visit.
+    const { sentinel, calls } = await setup([
+      { offset: 100, lines: [], available: false, reason: 'WP_DEBUG_LOG is off' },
+      { offset: 4000, lines: [], available: true },
+      { offset: 4100, lines: ['[15-Sep-2026 22:40:00 UTC] PHP Warning:  boom in /x.php on line 1'], available: true },
+    ]);
+
+    const lost = await sentinel.drain();
+    const recovered = await sentinel.drain();
+
+    expect(lost).toMatchObject([{ kind: 'phplog' }]);
+    expect(lost[0]?.text).toContain('WP_DEBUG_LOG is off');
+    expect(calls).toEqual(['end', 100, 'end', 4000]);
+    expect(recovered.map((f) => f.text)).toContain('PHP Warning: boom in /x.php on line 1');
+  });
+
+  it('reports every window it cannot read, so a persistently lost log never reads as clean', async () => {
+    const { sentinel, calls } = await setup([
+      { offset: 100, lines: [], available: false, reason: 'debug.log is not readable' },
+      { offset: 0, lines: [], available: false, reason: 'debug.log is not readable' },
+    ]);
+
+    expect(await sentinel.drain()).toHaveLength(1);
+    expect(await sentinel.drain()).toHaveLength(2);
+    expect(calls).toEqual(['end', 100, 'end', 'end']);
+  });
+
+  it('reports the window as unread when the INSTALL baseline itself was lost', async () => {
+    const page = new FakePage();
+    const { agent, calls } = fakeAgent([
+      { offset: 0, lines: [], available: false, reason: 'debug.log is not readable' },
+      { offset: 900, lines: [], available: true },
+    ]);
+    const sentinel = await installSentinel(page.asPage(), agent);
+
+    const findings = await sentinel.drain();
+
+    expect(findings).toMatchObject([{ kind: 'phplog' }]);
+    expect(findings[0]?.text).toContain('debug.log is not readable');
+    // No usable baseline existed, so nothing may be read from an offset: take a fresh one.
+    expect(calls).toEqual(['end', 'end']);
+  });
+});
