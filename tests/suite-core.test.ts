@@ -7,7 +7,8 @@ import type { Journey } from '../src/journeys/index.ts';
 import { CONTROL_SCREEN } from '../src/journeys/support.ts';
 import { accessMatrix } from '../src/suite/admin-access-matrix.ts';
 import { conformanceSurface, coreSuite } from '../src/suite/index.ts';
-import { adminSweep, shortcodeRender, sweepPlan } from '../src/suite/rendered-surface.ts';
+import { adminSweep, blockRender, shortcodeRender, sweepPlan } from '../src/suite/rendered-surface.ts';
+import { CFG, FakeBrowser, FakePage, fakeAgent, landsOn } from './helpers/fakes.ts';
 import type { Surface } from '../src/discovery/types.ts';
 
 const delta: Surface = {
@@ -155,6 +156,7 @@ describe('coreSuite', () => {
       'admin-sweep:acme:contributor',
       'admin-sweep:acme:editor',
       'admin-sweep:acme:subscriber',
+      'block-render:acme',
       'frontend-renders',
       'lifecycle:acme',
       'shortcode-render:acme',
@@ -207,11 +209,53 @@ describe('a journey whose subject is absent skips, and a skip is never a pass', 
     expect(outcomeOf(result)).toBe('skip');
   });
 
+  it('blockRender skips when the plugin registered no blocks (R57)', async () => {
+    const result = await blockRender('acme', empty).run(nothing, nothing, nothing);
+
+    expect(result.skipped).toBe(true);
+    expect(result.skipReason).toContain('no blocks');
+    expect(outcomeOf(result)).toBe('skip');
+  });
+
   it('shortcodeRender skips when the plugin registered no shortcodes', async () => {
     const result = await shortcodeRender('acme', empty).run(nothing, nothing, nothing);
 
     expect(result.skipped).toBe(true);
     expect(result.skipReason).toContain('no shortcodes');
     expect(outcomeOf(result)).toBe('skip');
+  });
+});
+
+describe('blockRender (R57: the discovered block axis is exercised, not only listed)', () => {
+  const withBlocks: Surface = { ...delta, blocks: ['acme/hello', 'acme/card'] };
+
+  function arrange(body: string) {
+    const page = new FakePage();
+    page.navigations = [landsOn('https://s.test/wp-admin/')];
+    page.body = body;
+    const { agent } = fakeAgent();
+    const run = () => blockRender('acme', withBlocks).run(new FakeBrowser(page).asBrowser(), CFG, agent);
+    return { page, run };
+  }
+
+  it('renders every block the plugin added through the agent, as an administrator', async () => {
+    const { page, run } = arrange('<div data-wpj-render-block="1" data-wpj-registered="1" data-wpj-dynamic="1">x</div>');
+
+    const result = await run();
+
+    expect(result.findings).toEqual([]);
+    expect(outcomeOf(result)).toBe('pass');
+    expect(page.gotos.slice(1)).toEqual(['/?wpj_render_block=acme%2Fhello', '/?wpj_render_block=acme%2Fcard']);
+  });
+
+  it('fails when a render proves nothing, naming the block', async () => {
+    const { run } = arrange('<html><body>home</body></html>');
+
+    const result = await run();
+
+    expect(outcomeOf(result)).toBe('fail');
+    expect(result.findings).toMatchObject([
+      { kind: 'assertion', text: expect.stringContaining('the block acme/hello produced no wp-journeys render marker') },
+    ]);
   });
 });

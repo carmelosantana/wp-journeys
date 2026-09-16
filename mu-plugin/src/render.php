@@ -47,3 +47,35 @@ function wpj_render_wrap($raw, $out) {
     $expanded = $out !== $raw ? '1' : '0';
     return '<div data-wpj-render="1" data-wpj-expanded="' . $expanded . '">' . $out . '</div>';
 }
+
+/**
+ * The block door's payload gate (R57): one block name, in exactly the shape
+ * WP_Block_Type_Registry::register() accepts, and nothing else. The same reasoning as the
+ * shortcode gate above — this door carries no credential beyond the guard.
+ *
+ * @param mixed $raw the wpj_render_block query value, as received
+ * @return bool
+ */
+function wpj_render_block_payload_allowed($raw) {
+    if (!is_string($raw)) {
+        return false;
+    }
+    return preg_match('/\A[a-z0-9-]+\/[a-z0-9-]+\z/', $raw) === 1;
+}
+
+/**
+ * The block door's output. `registered` because render_block() answers a block the registry
+ * does not know with an empty string, not an error, so an unregistered name would otherwise
+ * render "cleanly". `dynamic` because only a dynamic block has a server render to exercise; a
+ * static block's markup lives in post content, so for it the render proves registration and a
+ * clean render_block filter chain, and no more.
+ *
+ * @param bool   $registered
+ * @param bool   $dynamic
+ * @param string $out what render_block() returned
+ * @return string
+ */
+function wpj_render_block_wrap($registered, $dynamic, $out) {
+    return '<div data-wpj-render-block="1" data-wpj-registered="' . ($registered ? '1' : '0')
+        . '" data-wpj-dynamic="' . ($dynamic ? '1' : '0') . '">' . $out . '</div>';
+}

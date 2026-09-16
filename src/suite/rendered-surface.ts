@@ -1,9 +1,9 @@
 /**
  * Drive every admin screen the plugin added, as one actor, asserting allow or deny per the
- * matrix; and render every shortcode it added on the frontend.
+ * matrix; and render every shortcode and every block it added on the frontend.
  */
 import { Actor, isAnonymous } from '../actors/roles.ts';
-import { shortcodeRenderDefect, shortcodeRenderUrl } from '../agent/render.ts';
+import { blockRenderDefect, blockRenderUrl, shortcodeRenderDefect, shortcodeRenderUrl } from '../agent/render.ts';
 import type { Surface } from '../discovery/types.ts';
 import type { Journey, JourneyResult, SurfaceAxis } from '../journeys/index.ts';
 import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
@@ -103,6 +103,34 @@ export function shortcodeRender(plugin: string, delta: Surface): Journey {
         for (const tag of delta.shortcodes) {
           await sentinel.visit(page, shortcodeRenderUrl(tag));
           const defect = shortcodeRenderDefect(await page.content(), tag);
+          if (defect) throw new Error(defect);
+        }
+        return 0;
+      });
+    },
+  };
+}
+
+/**
+ * Render every block the plugin added, on the front end, as an administrator (R57).
+ *
+ * Symmetric with `shortcodeRender`: discovery has always listed blocks, and until this journey
+ * no run exercised one — a whole discovered axis reported nothing and said so nowhere.
+ */
+export function blockRender(plugin: string, delta: Surface): Journey {
+  const name = `block-render:${plugin}`;
+  return {
+    name,
+    actor: Actor.ADMINISTRATOR,
+    surface: 'both',
+    run: async (browser, cfg, agent) => {
+      if (delta.blocks.length === 0) {
+        return skipped(name, Actor.ADMINISTRATOR, 'both', `${plugin} registered no blocks`);
+      }
+      return runAsActor(browser, cfg, agent, name, Actor.ADMINISTRATOR, 'both', async (page, sentinel) => {
+        for (const block of delta.blocks) {
+          await sentinel.visit(page, blockRenderUrl(block));
+          const defect = blockRenderDefect(await page.content(), block);
           if (defect) throw new Error(defect);
         }
         return 0;

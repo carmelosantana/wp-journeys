@@ -38,4 +38,17 @@ wpj_assert('an expanded tag is marked expanded', '<div data-wpj-render="1" data-
 wpj_assert('output that quotes its own tag is still expanded', '<div data-wpj-render="1" data-wpj-expanded="1">[acme] needs a url.</div>', wpj_render_wrap('[acme]', '[acme] needs a url.'));
 wpj_assert('an unchanged tag is marked not expanded', '<div data-wpj-render="1" data-wpj-expanded="0">[acme]</div>', wpj_render_wrap('[acme]', '[acme]'));
 
+// The block door (R57): a block name as core's registry accepts one, and nothing else.
+wpj_assert('a namespaced block name is allowed', true, wpj_render_block_payload_allowed('wpj-fixture/hello'));
+wpj_assert('digits are allowed in both halves', true, wpj_render_block_payload_allowed('acme2/block-3'));
+wpj_assert('a name without a namespace is refused', false, wpj_render_block_payload_allowed('hello'));
+wpj_assert('upper case is refused, as core refuses it', false, wpj_render_block_payload_allowed('Acme/hello'));
+wpj_assert('markup is refused', false, wpj_render_block_payload_allowed('acme/<script>'));
+wpj_assert('a trailing newline is refused', false, wpj_render_block_payload_allowed("acme/hello\n"));
+wpj_assert('a third segment is refused', false, wpj_render_block_payload_allowed('acme/a/b'));
+wpj_assert('a non-string is refused', false, wpj_render_block_payload_allowed(array()));
+
+wpj_assert('a registered dynamic block is marked so', '<div data-wpj-render-block="1" data-wpj-registered="1" data-wpj-dynamic="1"><p>hi</p></div>', wpj_render_block_wrap(true, true, '<p>hi</p>'));
+wpj_assert('an unregistered block is marked so', '<div data-wpj-render-block="1" data-wpj-registered="0" data-wpj-dynamic="0"></div>', wpj_render_block_wrap(false, false, ''));
+
 wpj_assert_exit();

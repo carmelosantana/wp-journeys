@@ -158,6 +158,33 @@ function wpj_agent_render_endpoint() {
     exit;
 }
 
+// The block door (R57): `?wpj_render_block=<name>` renders one registered block on the front end,
+// the counterpart of the shortcode door above, behind the same guard.
+add_action('template_redirect', 'wpj_agent_render_block_endpoint');
+
+function wpj_agent_render_block_endpoint() {
+    if (!isset($_GET['wpj_render_block'])) {
+        return;
+    }
+    if (wpj_guard_verdict(wpj_agent_env()) !== '') {
+        return;
+    }
+    $name = wp_unslash($_GET['wpj_render_block']);
+    if (!wpj_render_block_payload_allowed($name)) {
+        return;
+    }
+    $type = WP_Block_Type_Registry::get_instance()->get_registered($name);
+    $out = render_block(array(
+        'blockName' => $name,
+        'attrs' => array(),
+        'innerBlocks' => array(),
+        'innerHTML' => '',
+        'innerContent' => array(),
+    ));
+    echo wpj_render_block_wrap($type !== null, $type !== null && $type->is_dynamic(), $out);
+    exit;
+}
+
 // The third door: a browser following a minted URL. It runs on every request, so it does as
 // little as possible before deciding this is not one of ours.
 add_action('init', 'wpj_agent_login_endpoint');

@@ -7,7 +7,7 @@ import type { Journey } from '../journeys/index.ts';
 import type { Baseline } from './baseline.ts';
 import { frontendRenders } from './frontend-renders.ts';
 import { lifecycle } from './lifecycle.ts';
-import { adminSweep, shortcodeRender } from './rendered-surface.ts';
+import { adminSweep, blockRender, shortcodeRender } from './rendered-surface.ts';
 
 export type { AccessCase } from './admin-access-matrix.ts';
 export { accessMatrix } from './admin-access-matrix.ts';
@@ -48,6 +48,7 @@ export function coreSuite(
     frontendRenders,
     ...ALL_ACTORS.map((actor) => adminSweep(plugin, delta, actor)),
     shortcodeRender(plugin, delta),
+    blockRender(plugin, delta),
     ...authored,
     // Uninstall runs last: it removes the plugin the other journeys need.
     lifecycle(plugin, baseline, uninstall),

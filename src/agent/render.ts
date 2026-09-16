@@ -44,3 +44,36 @@ export function shortcodeRenderDefect(html: string, tag: string): string | null 
   }
   return null;
 }
+
+/** The frontend URL that renders one block through the agent's block door (R57). */
+export function blockRenderUrl(name: string): string {
+  return `/?wpj_render_block=${encodeURIComponent(name)}`;
+}
+
+/**
+ * Why a render of the block `name` proved nothing, or `null` when it rendered.
+ *
+ * The same two-part proof as a shortcode, adapted to what `render_block` can say: the marker
+ * proves the endpoint ran, and `data-wpj-registered` proves the block exists — `render_block`
+ * answers an unregistered name with an empty string, which would otherwise read as a clean
+ * render. A STATIC block passes on registration alone: its markup lives in post content, so
+ * the server has nothing to render for it, and the journey asserts only that the render path
+ * (the `render_block` filters, block supports) ran without a diagnostic.
+ */
+export function blockRenderDefect(html: string, name: string): string | null {
+  const marker = /<div data-wpj-render-block="1"([^>]*)>/.exec(html);
+  if (!marker) {
+    return `rendering the block ${name} produced no wp-journeys render marker — the agent's block `
+      + 'endpoint did not run, so nothing about this block was actually asserted';
+  }
+  const registered = /\sdata-wpj-registered="([01])"/.exec(marker[1] ?? '')?.[1];
+  if (registered === undefined) {
+    return `the render marker does not say whether ${name} is registered — the wp-journeys agent on `
+      + 'the site is older than this runner; remount it';
+  }
+  if (registered === '0') {
+    return `the block ${name} is not registered at render time — render_block answers an unknown block `
+      + 'with nothing, so it was discovered but cannot be rendered';
+  }
+  return null;
+}

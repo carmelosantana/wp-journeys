@@ -33,7 +33,7 @@ import type { Baseline } from '../../src/suite/baseline.ts';
 import { captureBaseline } from '../../src/suite/baseline.ts';
 import { conformanceSurface } from '../../src/suite/index.ts';
 import { lifecycle } from '../../src/suite/lifecycle.ts';
-import { adminSweep, shortcodeRender } from '../../src/suite/rendered-surface.ts';
+import { adminSweep, blockRender, shortcodeRender } from '../../src/suite/rendered-surface.ts';
 
 const PLUGIN = 'wpj-fixture';
 /** The ONE site these proofs may mutate. They uninstall a plugin and delete a cron event. */
@@ -229,6 +229,20 @@ test('a shortcode that never registered goes red, rather than passing on a 200 (
 
   expect(outcomeOf(result), detail(result)).toBe('fail');
   expect(JSON.stringify(result.findings)).toContain('came back verbatim');
+});
+
+test('every block the plugin added renders through the front end (R57)', async () => {
+  expect(delta.blocks).toEqual(['wpj-fixture/hello']);
+  const result = await blockRender(PLUGIN, delta).run(browser, cfg, agent);
+
+  expect(outcomeOf(result), detail(result)).toBe('pass');
+});
+
+test('a block that is not registered goes red, rather than rendering "cleanly" as nothing (R57)', async () => {
+  const result = await blockRender(PLUGIN, { ...delta, blocks: ['wpj-fixture/not-a-block'] }).run(browser, cfg, agent);
+
+  expect(outcomeOf(result), detail(result)).toBe('fail');
+  expect(JSON.stringify(result.findings)).toContain('wpj-fixture/not-a-block is not registered');
 });
 
 /**

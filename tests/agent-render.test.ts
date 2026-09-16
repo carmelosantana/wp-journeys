@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { shortcodeRenderDefect, shortcodeRenderUrl } from '../src/agent/render.ts';
+import { blockRenderDefect, blockRenderUrl, shortcodeRenderDefect, shortcodeRenderUrl } from '../src/agent/render.ts';
 
 /** The agent's marker as Chromium serialises it, around what do_shortcode() returned. */
 const rendered = (expanded: '0' | '1', inner: string) =>
@@ -39,5 +39,44 @@ describe('shortcodeRenderDefect', () => {
     // false defect above; passing would assert nothing about expansion at all.
     expect(shortcodeRenderDefect('<div data-wpj-render="1"><p>x</p></div>', 'acme'))
       .toMatch(/does not say whether \[acme\] expanded/);
+  });
+});
+
+/** The block door's marker as Chromium serialises it. */
+const block = (registered: '0' | '1', dynamic: '0' | '1', inner = '') =>
+  `<html><head></head><body><div data-wpj-render-block="1" data-wpj-registered="${registered}" `
+  + `data-wpj-dynamic="${dynamic}">${inner}</div></body></html>`;
+
+describe('blockRenderUrl', () => {
+  it('asks the block door for one block by name', () => {
+    expect(blockRenderUrl('acme/hello')).toBe('/?wpj_render_block=acme%2Fhello');
+  });
+});
+
+describe('blockRenderDefect (R57)', () => {
+  it('passes a registered dynamic block the server rendered', () => {
+    expect(blockRenderDefect(block('1', '1', '<p>hello</p>'), 'acme/hello')).toBeNull();
+  });
+
+  it('passes a registered static block: its markup lives in post content, so render_block had nothing to add', () => {
+    expect(blockRenderDefect(block('1', '0'), 'acme/static')).toBeNull();
+  });
+
+  it('fails a block the registry does not know — render_block answers an unknown one with nothing, not an error', () => {
+    expect(blockRenderDefect(block('0', '0'), 'acme/gone')).toMatch(/acme\/gone is not registered/);
+  });
+
+  it('fails when the marker is absent — the endpoint never ran', () => {
+    expect(blockRenderDefect('<html><body>home</body></html>', 'acme/hello'))
+      .toMatch(/rendering the block acme\/hello produced no wp-journeys render marker/);
+  });
+
+  it('does not accept the SHORTCODE door\'s marker as proof a block rendered', () => {
+    expect(blockRenderDefect(rendered('1', '<p>x</p>'), 'acme/hello')).toMatch(/no wp-journeys render marker/);
+  });
+
+  it('fails, rather than guessing, when the marker does not say whether the block is registered', () => {
+    expect(blockRenderDefect('<div data-wpj-render-block="1"></div>', 'acme/hello'))
+      .toMatch(/does not say whether acme\/hello is registered/);
   });
 });
