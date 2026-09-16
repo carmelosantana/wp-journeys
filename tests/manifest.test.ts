@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { errors } from '@playwright/test';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { CONTROL_SCREEN } from '../src/journeys/support.ts';
@@ -471,7 +472,7 @@ describe('interpret', () => {
       // the read-back nor the URL.
       const { page, run } = arrange(journey, undefined, nonce);
       page.navigations = [ADMIN_LANDING, CONTROL];
-      page.textError = new Error('locator.innerText: Timeout 5000ms exceeded.');
+      page.textError = new errors.TimeoutError('locator.innerText: Timeout 5000ms exceeded.');
 
       const result = await run();
 
@@ -483,6 +484,21 @@ describe('interpret', () => {
       expect(page.innerTextCalls).toHaveLength(1);
       expect(page.innerTextCalls[0]?.timeout).toBeGreaterThan(0);
       expect(page.innerTextCalls[0]?.timeout).toBeLessThanOrEqual(5_000);
+    });
+
+    it('does not call a page bodiless when reading it failed for another reason (T13 parked minor)', async () => {
+      // A closed page, a crashed target, a navigation mid-read: none of them is a page without a
+      // <body>, and saying so sends the operator after the wrong readBack URL.
+      const { page, run } = arrange(journey, undefined, nonce);
+      page.navigations = [ADMIN_LANDING, CONTROL];
+      page.textError = new Error('locator.innerText: Target page, context or browser has been closed');
+
+      const result = await run();
+
+      expect(result.findings).toHaveLength(1);
+      expect(result.findings[0]?.text).toContain('journey "s": could not read the visible text of the read-back page /');
+      expect(result.findings[0]?.text).toContain('Target page, context or browser has been closed');
+      expect(result.findings[0]?.text).not.toContain('no HTML body');
     });
 
     it('draws a fresh nonce for every write by default, so no earlier write can satisfy a later read-back', async () => {

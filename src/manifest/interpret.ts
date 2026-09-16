@@ -114,17 +114,27 @@ const BODY_TIMEOUT_MS = 5_000;
  * instead would let a short or common value — "1", "Home", the plugin's own name — read back
  * out of a class name, a script body, a comment or the head, regardless of the setting.
  *
- * A read-back URL that serves a feed, a REST route or anything XML/JSON has no `<body>`. The
- * locator would wait out its full timeout and then fail with a message about a locator, naming
- * neither the read-back nor the URL — so the wait is short and the failure is named here.
+ * A read-back URL that serves XML — a feed, a sitemap — has no `<body>`. (JSON and plain text
+ * DO: Chromium wraps them in a synthesised `html/body/pre`, so such a page is read as text.)
+ * The locator would wait out its full timeout and then fail with a message about a locator,
+ * naming neither the read-back nor the URL — so the wait is short and the failure is named here.
+ *
+ * Only a TIMEOUT is diagnosed as a bodiless page. Anything else — a closed page, a crashed
+ * target, a navigation mid-read — is reported as what it is, still naming the journey and URL.
  */
 async function visibleText(page: Page, entry: ManifestJourney, url: string): Promise<string> {
   try {
     return await page.locator('body').innerText({ timeout: BODY_TIMEOUT_MS });
   } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(
+        `journey "${entry.name}": the read-back page ${url} served no HTML body (${messageOf(error)}) — `
+          + 'a readBack must be an HTML page',
+        { cause: error },
+      );
+    }
     throw new Error(
-      `journey "${entry.name}": the read-back page ${url} served no HTML body (${messageOf(error)}) — `
-        + 'a readBack must be an HTML page',
+      `journey "${entry.name}": could not read the visible text of the read-back page ${url} — ${messageOf(error)}`,
       { cause: error },
     );
   }
