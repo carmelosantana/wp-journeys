@@ -53,6 +53,13 @@ export class FakePage {
     for (const handler of this.handlers[event] ?? []) void handler(arg as never);
   }
 
+  /** An uncaught exception or unhandled rejection, as Playwright reports one: `pageerror`. */
+  throwUncaught(message: string, name = 'Error'): void {
+    const error = new Error(message);
+    error.name = name;
+    this.emit('pageerror', error);
+  }
+
   /** Where the page SETTLED, after redirects — how a login that failed becomes visible. */
   current = 'https://s.test/';
 

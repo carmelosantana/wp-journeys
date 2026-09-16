@@ -16,6 +16,7 @@ import {
   DEPRECATED_KEYS, GATE_KEYS, JOURNEY_KEYS, MANIFEST_KEYS, OPTIONAL_SETTING_KEYS, SCREEN_KEYS, SETTING_KEYS, parseManifest,
 } from '../src/manifest/schema.ts';
 import { CLI_ENV, HOME_VAR } from '../src/runner/cli.ts';
+import { SIGNAL_KINDS } from '../src/sentinel/phplog.ts';
 
 const RUNNING = join(skillsRoot(), 'wp-journeys-running');
 const AUTHORING = join(skillsRoot(), 'wp-journeys-authoring');
@@ -114,6 +115,13 @@ describe('the running skill', () => {
     const text = await read(join(RUNNING, 'references', 'mcp.md'));
     expect(text).not.toMatch(/"command":\s*"wpj"/);
     expect(text).toContain('"command": "node", "args": ["/path/to/wp-journeys/bin/wpj.js", "mcp"]');
+  });
+
+  it('explains every finding kind the sentinel can produce', async () => {
+    const text = await read(join(RUNNING, 'references', 'run-output.md'));
+    const table = text.split('## Chasing a finding')[1]?.split('\n## ')[0] ?? '';
+    const rows = [...table.matchAll(/^\| `([a-z]+)` \|/gm)].map((m) => m[1]!);
+    expect(new Set(rows)).toEqual(new Set(SIGNAL_KINDS));
   });
 
   it('names all six actors', async () => {

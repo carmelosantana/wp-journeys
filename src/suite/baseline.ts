@@ -244,8 +244,10 @@ export async function captureBaseline(
  * other: `phplog` against what the baseline saw in debug.log, and `bodyscan` against what it saw
  * printed into a rendered body. Neither vouches for the other — a body diagnostic is not
  * subtracted because a log line happened to carry the same words, and vice versa. Every other
- * signal (`response`, `console`, `requestfailed`, `assertion`) is left entirely alone: the
- * baseline is not evidence about any of them.
+ * signal (`response`, `console`, `pageerror`, `requestfailed`, `assertion`) is left entirely
+ * alone: the baseline is not evidence about any of them. A `pageerror` in particular is NEVER
+ * noise — an uncaught exception is the page's own code failing, and the baseline never measures
+ * the browser at all.
  *
  * EVERY occurrence goes, not one per baseline entry — a journey that loads three pages emits the
  * site's per-request notice three times, and taking one off would leave two false reds behind.

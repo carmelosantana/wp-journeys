@@ -1,6 +1,6 @@
 /**
- * The sentinel: four live signals wired onto a Playwright page, plus the debug.log delta
- * drained from the agent.
+ * The sentinel: five live signals wired onto a Playwright page (response, console, pageerror,
+ * requestfailed, and the body scan), plus the debug.log delta drained from the agent.
  *
  * `drain()` is async because the log signal is a round trip. It is also where a LOST signal
  * becomes visible: if the agent reports the log unavailable, that is recorded as a finding,
@@ -11,8 +11,8 @@ import type { Page } from '@playwright/test';
 
 import type { AgentClient } from '../agent/client.ts';
 import {
-  BENIGN_NETWORK, classifyConsole, classifyNavigation, classifyPhpLogLine, classifyRequestFailed,
-  classifyResponse, redactLoginToken, scanBody, type Expectation, type Finding,
+  BENIGN_NETWORK, classifyConsole, classifyNavigation, classifyPageError, classifyPhpLogLine,
+  classifyRequestFailed, classifyResponse, redactLoginToken, scanBody, type Expectation, type Finding,
 } from './classify.ts';
 
 /**
@@ -107,7 +107,15 @@ function dedupe(findings: Finding[], fromNavigation: WeakSet<Finding>): Finding[
   });
 }
 
-export async function installSentinel(page: Page, agent: AgentClient): Promise<Sentinel> {
+/** What the sentinel needs to know about the session it watches. */
+export interface SentinelOptions {
+  /** The shared secret, scrubbed from any page-error text before it becomes a finding. */
+  secret?: string;
+}
+
+export async function installSentinel(
+  page: Page, agent: AgentClient, options: SentinelOptions = {},
+): Promise<Sentinel> {
   const findings: Finding[] = [];
 
   /** Findings produced by `visit()`'s own assertion, which outrank the listener's echo. */
@@ -245,6 +253,14 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
     if (finding) findings.push(finding);
   });
 
+  // Uncaught exceptions and unhandled rejections arrive ONLY here — Playwright never turns them
+  // into console messages — so without this listener a script that throws on load leaves a
+  // broken screen reading as ok.
+  page.on('pageerror', (error) => {
+    // `String(error)` keeps the error's name ("ReferenceError: …"), which the message alone drops.
+    findings.push(classifyPageError(String(error), currentUrl() ?? '', options.secret));
+  });
+
   page.on('requestfailed', (request) => {
     // `request.response()` returns a PROMISE, so `request.response() !== null` is always true:
     // every failed request would look like a benign body-drain abort and this signal would be
@@ -289,8 +305,8 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
       if (target !== page) {
         throw new Error(
           'sentinel.visit() was given a page other than the one the sentinel was installed on — '
-            + 'its response, console and requestfailed listeners are not attached to that page, so '
-            + 'three of the four signals would be silently missing.',
+            + 'its response, console, pageerror and requestfailed listeners are not attached to that '
+            + 'page, so four of the live signals would be silently missing.',
         );
       }
       // Consumed before the navigation can throw, so a failed visit cannot leak its

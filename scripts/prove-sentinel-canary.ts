@@ -4,6 +4,8 @@
  * A green suite proves nothing until you have seen it fail on a real defect. `wpj-canary` is a
  * committed mu-plugin that emits an undefined-variable warning during `wp_head` on every
  * front-end render, armed by the `wpj_canary_armed` option and disarmed by deleting it (R22).
+ * A second option, `wpj_canary_js`, makes it print a script on `wp_footer` that throws, which
+ * proves the `pageerror` signal the same way.
  *
  * ── THE ORDERING CONSTRAINT (R62) — the whole reason this script exists ──
  *
@@ -53,6 +55,10 @@ import { frontendRenders } from '../src/suite/frontend-renders.ts';
 /** The ONE site this may mutate. It writes and deletes an option. */
 const TARGET = 'wpjtest';
 const ARMED_OPTION = 'wpj_canary_armed';
+/** Arms the canary's CLIENT-side defect: an inline script on wp_footer that throws. */
+const JS_OPTION = 'wpj_canary_js';
+/** The JS canary's own thrown message, and the only kind that may carry it. */
+const EXPECTED_JS = /wpj-canary: deliberate uncaught JavaScript error/;
 /**
  * What the CANARY'S OWN defect says — and nothing more general.
  *
@@ -88,7 +94,12 @@ async function wpTolerant(args: string): Promise<void> {
 }
 
 const arm = () => wpCli(`option update ${ARMED_OPTION} 1`);
-const disarm = () => wpTolerant(`option delete ${ARMED_OPTION}`);
+const armJs = () => wpCli(`option update ${JS_OPTION} 1`);
+/** Both defects, always together: no leg may leave either one armed. */
+const disarm = async (): Promise<void> => {
+  await wpTolerant(`option delete ${ARMED_OPTION}`);
+  await wpTolerant(`option delete ${JS_OPTION}`);
+};
 
 /** Run the front-end journey and settle it exactly as the CLI's runSuite does. */
 async function runJourney(baseline: Baseline): Promise<JourneyResult> {
@@ -138,7 +149,26 @@ async function main(): Promise<number> {
     await disarm();
   }
 
-  // ── GREEN leg: the same journey, same baseline, defect removed. ──
+  // ── RED leg, client side: an uncaught JavaScript error must be a `pageerror` naming it. ──
+  // Playwright never reports an uncaught exception through `console`, so this leg is what
+  // proves the sixth signal is wired up on a real browser, not only on a fake page.
+  await armJs();
+  try {
+    const armedJs = await runJourney(baseline);
+    const jsOutcome = outcomeOf(armedJs);
+    console.log(`\nARMED JS -> ${jsOutcome}\n${describe(armedJs)}`);
+
+    if (jsOutcome !== 'fail') {
+      failures.push(`the armed JS canary produced "${jsOutcome}" — an uncaught error went unseen`);
+    }
+    if (!armedJs.findings.some((f) => f.kind === 'pageerror' && EXPECTED_JS.test(f.text))) {
+      failures.push('the armed JS run named no pageerror carrying the canary\'s thrown message — it failed for the wrong reason, or not at all');
+    }
+  } finally {
+    await disarm();
+  }
+
+  // ── GREEN leg: the same journey, same baseline, both defects removed. ──
   const clean = await runJourney(baseline);
   const cleanOutcome = outcomeOf(clean);
   console.log(`\nDISARMED -> ${cleanOutcome}\n${describe(clean)}`);
@@ -151,7 +181,7 @@ async function main(): Promise<number> {
     for (const failure of failures) console.error(`  - ${failure}`);
     return 1;
   }
-  console.log('\nPROOF OK: red with the canary armed, green with it disarmed.');
+  console.log('\nPROOF OK: red with each canary armed (phplog/bodyscan, then pageerror), green with both disarmed.');
   return 0;
 }
 

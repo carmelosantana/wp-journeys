@@ -36,6 +36,25 @@ describe('runAsActor', () => {
     expect(browser.closed).toEqual([true]);
   });
 
+  it('fails a journey whose page threw an uncaught JavaScript error', async () => {
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    const { agent } = fakeAgent();
+
+    const result = await runAsActor(
+      browser.asBrowser(), CFG, agent, 'frontend-renders', Actor.ANONYMOUS, 'frontend',
+      async (target, sentinel) => {
+        await sentinel.visit(target, '/');
+        page.throwUncaught('undefinedPluginGlobal is not defined', 'ReferenceError');
+        return 0;
+      },
+    );
+
+    expect(result.findings).toMatchObject([
+      { kind: 'pageerror', text: expect.stringContaining('ReferenceError: undefinedPluginGlobal is not defined') },
+    ]);
+  });
+
   it('authenticates a user-backed actor with the id ensureActor returned, before the body', async () => {
     // mintLogin refuses any user the runner did not create, so the id MUST come from
     // ensureActor — a hardcoded or real-site id is refused by design (R36).

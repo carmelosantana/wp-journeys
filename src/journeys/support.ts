@@ -212,7 +212,7 @@ export async function openActorSession(
 
   let sentinel: Sentinel;
   try {
-    sentinel = await installSentinel(page, agent);
+    sentinel = await installSentinel(page, agent, { secret: cfg.secret });
   } catch (error) {
     // With no sentinel there are no signals at all, so nothing is run: a page driven with
     // nothing watching it would report clean no matter what it hit.

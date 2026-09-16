@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  LOGIN_TOKEN_PARAM, classifyConsole, classifyNavigation, classifyRequestFailed, classifyResponse, containsLoginToken,
-  redactLoginToken, scanBody,
+  LOGIN_TOKEN_PARAM, classifyConsole, classifyNavigation, classifyPageError, classifyRequestFailed, classifyResponse,
+  containsLoginToken, redactLoginToken, scanBody,
 } from '../src/sentinel/classify.ts';
 
 const allowed = { denyExpected: false };
@@ -150,6 +150,42 @@ describe('classifyRequestFailed', () => {
 
   it('still flags a genuine connection refusal', () => {
     expect(classifyRequestFailed('/x', 'net::ERR_CONNECTION_REFUSED', false)).not.toBeNull();
+  });
+});
+
+describe('classifyPageError', () => {
+  it('flags an uncaught exception, naming the thrown message and the page', () => {
+    // Playwright delivers an uncaught exception ONLY as `pageerror`, never as a console message,
+    // so this is the one place a broken admin script becomes a finding at all.
+    expect(classifyPageError('ReferenceError: undefinedPluginGlobal is not defined', 'https://s.test/wp-admin/')).toEqual({
+      kind: 'pageerror', url: 'https://s.test/wp-admin/',
+      text: 'uncaught JavaScript error at https://s.test/wp-admin/: ReferenceError: undefinedPluginGlobal is not defined',
+    });
+  });
+
+  it('flags an unhandled rejection the same way', () => {
+    expect(classifyPageError('Error: acme settings failed to load', 'https://s.test/')?.text)
+      .toContain('acme settings failed to load');
+  });
+
+  it('is never null and never blank, even for an empty message', () => {
+    expect(classifyPageError('', '')).toEqual({
+      kind: 'pageerror', url: undefined,
+      text: 'uncaught JavaScript error at <unknown page>: <empty>',
+    });
+  });
+
+  it('redacts a login token from the url and the message', () => {
+    const token = 'https://s.test/?wpj_login=SECRETTOKENabc';
+    const finding = classifyPageError(`TypeError: bad at ${token}`, token);
+    expect(JSON.stringify(finding)).not.toContain('SECRETTOKEN');
+  });
+
+  it('redacts the shared secret when it is given', () => {
+    const secret = 's'.repeat(20);
+    const finding = classifyPageError(`Error: leaked ${secret}`, `https://s.test/?x=${secret}`, secret);
+    expect(JSON.stringify(finding)).not.toContain(secret);
+    expect(finding.text).toContain('<REDACTED>');
   });
 });
 

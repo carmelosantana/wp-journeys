@@ -440,6 +440,16 @@ describe('withoutBaselineNoise', () => {
     expect(withoutBaselineNoise(findings, baseline)).toEqual(findings);
   });
 
+  it('never subtracts a pageerror, even one worded exactly like recorded noise', async () => {
+    // The baseline measures only the log and the body. An uncaught JavaScript error is not
+    // evidence either of them can vouch for, so it is always the plugin's to answer for.
+    const findings: Finding[] = [
+      { kind: 'pageerror', text: NOISE_TEXT, url: 'https://s.test/' },
+    ];
+
+    expect(withoutBaselineNoise(findings, { ...baseline, bodyNoise: [NOISE_TEXT] })).toEqual(findings);
+  });
+
   it('is the identity when the baseline recorded no noise', async () => {
     const findings: Finding[] = [{ kind: 'phplog', text: NOISE_TEXT }];
 

@@ -12,8 +12,16 @@
  * Which signal produced a finding. Every kind but `assertion` is something the sentinel
  * observed; `assertion` is a journey's own check that failed (a thrown error captured by the
  * lifecycle helper).
+ *
+ * `pageerror` is an uncaught JavaScript exception or unhandled rejection. Playwright delivers
+ * those ONLY as a `pageerror` event, never as a console message, so the console signal alone
+ * left a broken admin script reading as ok.
+ *
+ * A runtime list, so the docs' drift tests can check that every kind is explained.
  */
-export type SignalKind = 'response' | 'console' | 'requestfailed' | 'phplog' | 'bodyscan' | 'assertion';
+export const SIGNAL_KINDS = ['response', 'console', 'pageerror', 'requestfailed', 'phplog', 'bodyscan', 'assertion'] as const;
+
+export type SignalKind = typeof SIGNAL_KINDS[number];
 
 /** One thing the sentinel observed that should not have happened. */
 export interface Finding {

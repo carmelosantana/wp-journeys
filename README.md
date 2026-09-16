@@ -4,8 +4,8 @@ An end-to-end journey runner for WordPress plugins, and it works with any plugin
 local site and a plugin slug. It finds the admin screens, shortcodes and blocks the plugin adds,
 drives them as six actors (`anonymous`, `subscriber`, `contributor`, `author`, `editor` and
 `administrator`), uninstalls the plugin, and checks what the uninstall left behind. Throughout,
-it watches the page's HTTP status, console errors, failed requests, PHP diagnostics printed into
-the page, and `debug.log`. **The binding constraint: a lost or skipped signal is never reported
+it watches the page's HTTP status, console errors, uncaught JavaScript errors, failed requests,
+PHP diagnostics printed into the page, and `debug.log`. **The binding constraint: a lost or skipped signal is never reported
 as ok.** A skip is its own outcome and is always shown. A signal the runner could not read
 counts as a failure, not a clean pass.
 

@@ -247,6 +247,50 @@ describe('the live listeners', () => {
     ]);
   });
 
+  it('records an uncaught exception, which Playwright reports ONLY as pageerror', async () => {
+    const { page, sentinel } = await setup();
+    page.current = 'https://s.test/wp-admin/admin.php?page=acme';
+    const thrown = new Error('undefinedPluginGlobal is not defined');
+    thrown.name = 'ReferenceError';
+    page.emit('pageerror', thrown);
+
+    expect(await sentinel.drain()).toEqual([{
+      kind: 'pageerror', url: 'https://s.test/wp-admin/admin.php?page=acme',
+      text: 'uncaught JavaScript error at https://s.test/wp-admin/admin.php?page=acme: ReferenceError: undefinedPluginGlobal is not defined',
+    }]);
+  });
+
+  it('records an unhandled promise rejection as a pageerror', async () => {
+    const { page, sentinel } = await setup();
+    page.emit('pageerror', new Error('acme: settings request rejected'));
+
+    expect(await sentinel.drain()).toMatchObject([
+      { kind: 'pageerror', text: expect.stringContaining('acme: settings request rejected') },
+    ]);
+  });
+
+  it('keeps two different page errors on one page as two findings', async () => {
+    const { page, sentinel } = await setup();
+    page.emit('pageerror', new Error('first'));
+    page.emit('pageerror', new Error('second'));
+
+    expect((await sentinel.drain()).map((f) => f.kind)).toEqual(['pageerror', 'pageerror']);
+  });
+
+  it('redacts a login token and the secret out of a page error', async () => {
+    const secret = 'q'.repeat(24);
+    const page = new FakePage();
+    const { agent } = fakeAgent([CLEAN]);
+    const sentinel = await installSentinel(page.asPage(), agent, { secret });
+    page.current = 'https://s.test/?wpj_login=SECRETTOKENabc';
+    page.emit('pageerror', new Error(`boom ${secret} at https://s.test/?wpj_login=SECRETTOKENabc`));
+
+    const text = JSON.stringify(await sentinel.drain());
+    expect(text).toContain('pageerror');
+    expect(text).not.toContain('SECRETTOKEN');
+    expect(text).not.toContain(secret);
+  });
+
   it('awaits request.response(), which is a promise — comparing it to null hides every failure', async () => {
     // `request.response() !== null` is always true: a Promise is never null. That one slip
     // turns the requestfailed signal off entirely while leaving it looking wired up.

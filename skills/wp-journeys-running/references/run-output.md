@@ -50,6 +50,7 @@ provisions each logged-in actor as `wpj_<role>`. Anonymous never logs in.
 | `bodyscan` | A PHP diagnostic printed into the HTML (`WP_DEBUG_DISPLAY`). | Same as `phplog`. If `debug.log` is off, this is the only signal you have. |
 | `response` | The page's main document was not what the journey needed. For example: `expected a permission denial … returned HTTP 200` (an access hole), `returned HTTP 403` where access was expected, `redirected to the login page`, or any 5xx. | A `redirected to the login page` finding on a logged-in actor means the session was not established. |
 | `console` | `console.error` on the page. Echoes of 4xx subresources are dropped. | Check the browser console for the same URL. |
+| `pageerror` | An uncaught JavaScript exception or unhandled promise rejection on the page. The browser never reports these as `console` messages, so this is the only signal that sees them. It is never subtracted as site noise. | The text names the page and the thrown message. Open that screen with devtools and find the script that threw. |
 | `requestfailed` | A request that got no response at all. | `ERR_NETWORK_CHANGED` is filtered out, because the runner's own wp-cli calls cause it. |
 | `assertion` | The journey's own check failed: orphans, a failed read-back, a failed gate, or a journey that threw. | Read the sentence. Each one names its likely causes. |
 

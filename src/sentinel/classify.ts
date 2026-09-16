@@ -2,10 +2,11 @@
  * The pure classifiers. Every "is this a defect?" decision lives here, with no browser and
  * no I/O, so the sentinel's judgement is unit-testable in full.
  */
+import { redactSecret } from '../errors.ts';
 import type { Finding } from './phplog.ts';
 
 export type { Finding, SignalKind } from './phplog.ts';
-export { classifyPhpLogLine } from './phplog.ts';
+export { SIGNAL_KINDS, classifyPhpLogLine } from './phplog.ts';
 
 /** What the journey said it expected of the document being classified. */
 export interface Expectation {
@@ -152,6 +153,25 @@ export function classifyConsole(type: string, text = '', url = ''): Finding | nu
     url: url ? redactLoginToken(url) : undefined,
     // Chromium puts the failing resource's URL inside the message text as well.
     text: `console.error: ${text ? redactLoginToken(text) : '<empty>'}`,
+  };
+}
+
+/**
+ * An uncaught exception or unhandled promise rejection on the page (the `pageerror` signal).
+ *
+ * Playwright never routes these through `console`, so without this a plugin script that throws
+ * on load leaves an admin screen broken while every signal reads clean. There is no benign case:
+ * whatever the page threw, the page's own code did not handle it, so this never returns null.
+ *
+ * The message and the url are redacted of a login token and, when given, the shared secret —
+ * a thrown message can quote the URL the page is on, and at the login step that is the token.
+ */
+export function classifyPageError(message: string, url: string, secret?: string): Finding {
+  const clean = (text: string): string => redactLoginToken(redactSecret(text, secret));
+  const safe = url ? clean(url) : '';
+  return {
+    kind: 'pageerror', url: safe || undefined,
+    text: `uncaught JavaScript error at ${safe || '<unknown page>'}: ${message ? clean(message) : '<empty>'}`,
   };
 }
 
