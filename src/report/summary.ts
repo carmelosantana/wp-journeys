@@ -56,27 +56,61 @@ function renderJourney(result: JourneyResult): string {
   return `${head}\n${result.findings.map(renderFinding).join('\n')}`;
 }
 
-/** How many journeys touched each half of WordPress. `both` counts for each. */
-function coverage(results: JourneyResult[]): Record<Exclude<SurfaceAxis, 'both'>, number> {
-  const counts = { admin: 0, frontend: 0 };
-  for (const result of results) {
-    if (result.surface === 'admin' || result.surface === 'both') counts.admin += 1;
-    if (result.surface === 'frontend' || result.surface === 'both') counts.frontend += 1;
-  }
+interface SurfaceCoverage {
+  /** Journeys that actually drove this half — passed or failed. */
+  exercised: number;
+  /** Journeys aimed at this half, skips included. */
+  total: number;
+}
+
+/**
+ * How much of each half of WordPress was actually EXERCISED, and how much was merely aimed at
+ * (R58). `both` counts toward each half.
+ *
+ * A skipped journey asserted nothing about its surface, so counting it as coverage is the
+ * binding constraint's defect relocated into a statistic: a header reading `admin: 8` beside six
+ * skipped sweeps tells a reader the admin surface is well covered when one journey ran. Both
+ * numbers are rendered rather than the skips being hidden, because the gap is the interesting
+ * part — it is what says "this plugin registered no admin screens", not "the admin half is fine".
+ */
+function coverage(
+  results: JourneyResult[],
+  outcomes: Outcome[],
+): Record<Exclude<SurfaceAxis, 'both'>, SurfaceCoverage> {
+  const counts = {
+    admin: { exercised: 0, total: 0 },
+    frontend: { exercised: 0, total: 0 },
+  };
+  results.forEach((result, index) => {
+    // A failure IS coverage: the journey drove the surface and found something there. Only a
+    // skip drove nothing.
+    const exercised = outcomes[index] !== 'skip';
+    for (const half of ['admin', 'frontend'] as const) {
+      if (result.surface !== half && result.surface !== 'both') continue;
+      counts[half].total += 1;
+      if (exercised) counts[half].exercised += 1;
+    }
+  });
   return counts;
 }
+
+/** Said out loud, because `0 journeys: 0 passed…` otherwise reads like a clean run. */
+const EMPTY_RUN =
+  '  no journeys ran — a suite that registers nothing asserts nothing, and must not report success';
 
 export function renderSummary(results: JourneyResult[]): string {
   const outcomes = results.map(outcomeOf);
   const failed = outcomes.filter((o) => o === 'fail').length;
   const skipped = outcomes.filter((o) => o === 'skip').length;
   const passed = outcomes.filter((o) => o === 'pass').length;
-  const surfaces = coverage(results);
+  const surfaces = coverage(results, outcomes);
 
   const header =
     `${plural(results.length, 'journey')}: ${passed} passed, ${failed} failed, ${skipped} skipped` +
-    ` — coverage admin: ${surfaces.admin}, frontend: ${surfaces.frontend}`;
+    ` — coverage admin: ${surfaces.admin.exercised} of ${surfaces.admin.total}` +
+    `, frontend: ${surfaces.frontend.exercised} of ${surfaces.frontend.total}`;
 
+  if (results.length === 0) return [header, EMPTY_RUN].join('\n');
   return [header, ...results.map(renderJourney)].join('\n');
 }
 
@@ -88,5 +122,9 @@ export function renderSummary(results: JourneyResult[]): string {
  * would believe the number.
  */
 export function exitCodeFor(results: JourneyResult[]): number {
+  // The floor. A run with no journeys at all asserted nothing, and the exit code is the one
+  // signal CI believes — a suite that silently registered nothing would otherwise be
+  // indistinguishable from a suite that ran clean.
+  if (results.length === 0) return 1;
   return results.some((r) => outcomeOf(r) === 'fail') ? 1 : 0;
 }

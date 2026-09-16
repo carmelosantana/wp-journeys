@@ -40,15 +40,43 @@ describe('renderSummary', () => {
 
   it('reports coverage per surface so an unexercised half is visible', () => {
     const out = renderSummary([pass, fail]);
-    expect(out).toContain('frontend: 1');
-    expect(out).toContain('admin: 1');
+    expect(out).toContain('frontend: 1 of 1');
+    expect(out).toContain('admin: 1 of 1');
   });
 
   it('counts a `both` journey toward each half of the surface axis', () => {
     const both: JourneyResult = { ...pass, name: 'shortcode-render:acme', surface: 'both' };
     const out = renderSummary([both]);
-    expect(out).toContain('admin: 1');
-    expect(out).toContain('frontend: 1');
+    expect(out).toContain('admin: 1 of 1');
+    expect(out).toContain('frontend: 1 of 1');
+  });
+
+  it('never counts a SKIPPED journey as coverage (R58)', () => {
+    // The binding constraint applied to the header statistic. A skipped journey asserted
+    // nothing about its surface, so counting it as coverage tells a reader scanning the header
+    // that the admin half is well exercised when in truth one journey ran — the same "a skip
+    // reads as ok" defect, moved out of the per-journey line and into the summary.
+    const skips = Array.from({ length: 6 }, (_, i) => ({ ...skip, name: `admin-sweep:acme:${i}` }));
+    const out = renderSummary([...skips, pass]);
+
+    expect(out).toContain('admin: 0 of 6');
+    expect(out).toContain('frontend: 1 of 1');
+    // The bare number that would read as six exercised admin journeys must not appear.
+    expect(out).not.toMatch(/admin: 6\b/);
+  });
+
+  it('counts a FAILED journey as coverage, because it did exercise the surface', () => {
+    // A failure is evidence: the journey drove the surface and found something there. Only a
+    // skip asserted nothing at all.
+    expect(renderSummary([fail])).toContain('admin: 1 of 1');
+  });
+
+  it('shows a run of nothing but skips as zero coverage on both halves', () => {
+    const both: JourneyResult = { ...skip, name: 'shortcode-render:acme', surface: 'both' };
+    const out = renderSummary([skip, both]);
+
+    expect(out).toContain('admin: 0 of 2');
+    expect(out).toContain('frontend: 0 of 1');
   });
 
   it('is deterministic for the same input', () => {
@@ -114,8 +142,13 @@ describe('exitCodeFor', () => {
     expect(exitCodeFor([pass, fail])).toBe(1);
   });
 
-  it('is 0 for an empty run, which asserted nothing but failed nothing either', () => {
-    expect(exitCodeFor([])).toBe(0);
+  it('is NOT 0 for an empty run — a suite that registered nothing must never read as success', () => {
+    // The exit code is the one signal CI believes. Task 11's carry-forward warns precisely that
+    // a suite which silently registers nothing also "passes" everything it has; without a floor
+    // that state is indistinguishable from a clean run.
+    expect(exitCodeFor([])).toBe(1);
+    expect(renderSummary([])).toContain('0 journeys');
+    expect(renderSummary([])).toMatch(/no journeys ran/i);
   });
 
   it('agrees with the summary text: a run of nothing but skips is not a failure', () => {
