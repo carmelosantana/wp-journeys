@@ -274,9 +274,14 @@ function usage(reason: string): void {
   );
 }
 
+/**
+ * @param createAgent injectable so a test can drive the run up to the first wp-cli call without a
+ *   site; production always uses the real client
+ */
 export async function main(
   argv: string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
+  createAgent: (baseUrl: string, secret: string) => AgentClient = createAgentClient,
 ): Promise<number> {
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
@@ -286,7 +291,7 @@ export async function main(
   const { plugin } = parsed;
 
   const cfg = loadConfig(env);
-  const agent = createAgentClient(cfg.baseUrl, cfg.secret);
+  const agent = createAgent(cfg.baseUrl, cfg.secret);
 
   // wp-cli is used ONLY to toggle the plugin under test — everything else goes through the
   // agent, so a target without wp-cli loses only this one capability, loudly.

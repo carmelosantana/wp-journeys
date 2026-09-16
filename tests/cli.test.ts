@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { Actor } from '../src/actors/roles.ts';
 import { register } from '../src/journeys/index.ts';
+import type { AgentClient } from '../src/agent/client.ts';
 import type { Journey, JourneyResult } from '../src/journeys/index.ts';
 import { main, manifestPlan, parseArgs, runSuite, wpCommands } from '../src/runner/cli.ts';
 import type { Baseline } from '../src/suite/baseline.ts';
@@ -417,20 +418,32 @@ describe('manifestPlan (R70: the manifest directory is not the mount path)', () 
 
   it('refuses that collision BEFORE any wp-cli call touches the site', async () => {
     // It used to be caught inside coreSuite, after the baseline had already deactivated and
-    // reactivated the plugin under test.
+    // reactivated the plugin under test. The agent here ANSWERS status(), which the baseline asks
+    // first, so a late check would let the run reach the deactivate — the wp-cli command below,
+    // which leaves a marker — before failing. Only an early check leaves no marker.
     const dir = await manifestDir(manifest('acme', [{ ...denial, name: 'frontend-renders' }]));
     const marker = join(dir, 'wp-cli-ran');
+    const agent = {
+      status: async () => ({ ok: true, wp: '7.1', php: '8.4', debugLog: true, pluginActive: false }),
+    } as unknown as AgentClient;
+    const unreachable = () => Promise.reject(new Error('the agent was asked for more than status()'));
+    const answering = new Proxy(agent, {
+      get: (target, property) => (property in target ? target[property as keyof AgentClient] : unreachable),
+    });
     const stderr = process.stderr.write;
     process.stderr.write = (() => true) as typeof process.stderr.write;
+    let outcome: unknown;
     try {
-      await expect(main(['run', '--plugin', 'acme'], {
+      outcome = await main(['run', '--plugin', 'acme'], {
         WPJ_BASE_URL: 'https://site.test', WPJ_AGENT_SECRET: 'x'.repeat(16),
         WPJ_WP: `touch ${marker} #`, WPJ_MANIFEST_DIR: dir,
-      })).rejects.toThrow(/duplicate journey name "frontend-renders"/);
+      }, () => answering).then(() => 'resolved', (error: unknown) => error);
     } finally {
       process.stderr.write = stderr;
     }
 
+    // The ordering first: had any wp-cli command run, the marker would exist.
     await expect(access(marker)).rejects.toThrow();
+    expect(String(outcome)).toMatch(/duplicate journey name "frontend-renders"/);
   });
 });
