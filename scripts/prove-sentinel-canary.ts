@@ -37,7 +37,7 @@
  *
  * Usage (wpjtest only — it writes an option on the target site):
  *   set -a; . ./.env; set +a
- *   WPJ_WP="node /path/to/wph.js wp wpjtest" node scripts/prove-sentinel-canary.ts
+ *   WPJ_WP="node /path/to/wph.js wp wpjtest --" node scripts/prove-sentinel-canary.ts
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -54,6 +54,8 @@ import { frontendRenders } from '../src/suite/frontend-renders.ts';
 
 /** The ONE site this may mutate. It writes and deletes an option. */
 const TARGET = 'wpjtest';
+/** Its host, compared EXACTLY: a substring check would accept wpjtest.evil.example. */
+const TARGET_HOST = 'wpjtest.wp.test';
 const ARMED_OPTION = 'wpj_canary_armed';
 /** Arms the canary's CLIENT-side defect: an inline script on wp_footer that throws. */
 const JS_OPTION = 'wpj_canary_js';
@@ -78,8 +80,8 @@ const wp = process.env.WPJ_WP ?? '';
 
 if (!wp) throw new Error('WPJ_WP is not set — this proof needs a wp-cli command for the target.');
 // Structural, not conventional: one mistyped variable must not arm a canary on a real site.
-if (!wp.includes(TARGET)) throw new Error(`WPJ_WP must target ${TARGET}, got: ${wp}`);
-if (!cfg.baseUrl.includes(TARGET)) throw new Error(`WPJ_BASE_URL must target ${TARGET}`);
+if (!wp.split(/\s+/).includes(TARGET)) throw new Error(`WPJ_WP must name ${TARGET} as one of its words, got: ${wp}`);
+if (new URL(cfg.baseUrl).hostname !== TARGET_HOST) throw new Error(`WPJ_BASE_URL must point at ${TARGET_HOST}`);
 
 async function wpCli(args: string): Promise<void> {
   await run('sh', ['-c', `${wp} ${args}`]);

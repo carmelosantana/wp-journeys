@@ -47,6 +47,10 @@ ok()   { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 bad()  { FAIL=$((FAIL + 1)); printf 'FAIL  %s\n        expected: %s\n        actual:   %s\n' "$1" "$2" "$3"; }
 skip() { SKIPPED=$((SKIPPED + 1)); printf 'SKIP  %s\n        %s\n' "$1" "$2"; }
 is()   { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$(printf '%s' "$3" | redact)"; fi; }
+# The destructive steps below delete and re-create users. When the agent calls before them have
+# already failed, deleting a user would only leave the site worse, so they are skipped — and a
+# skip still fails the run.
+agent_failed() { skip "$1" "not run: earlier agent calls failed, so no user is deleted or changed"; }
 has()  { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "a reply containing $2" "$(printf '%s' "$3" | redact)" ;; esac; }
 
 api() {
@@ -68,10 +72,15 @@ wp_cli() { $WP "$@" 2>/dev/null; }
 # the first call of any kind, unless the wp-cli and the base URL both name the scratch site.
 if [ -n "$WP" ]; then
   names_scratch=no
+  # No globbing while the words are split: a `*` in WPJ_WP must not expand to file names.
+  set -f
   for word in $WP; do
     [ "$word" = wpjtest ] && names_scratch=yes
   done
-  case "$WPJ_BASE_URL" in *wpjtest*) ;; *) names_scratch=no ;; esac
+  set +f
+  # The EXACT host, never a substring match, which would accept wpjtest.evil.example.
+  host="$(printf '%s' "$WPJ_BASE_URL" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*://([^/@]*@)?([^/:?#]*).*$#\2#')"
+  [ "$host" = wpjtest.wp.test ] || names_scratch=no
   if [ "$names_scratch" != yes ]; then
     echo "refusing: WPJ_WP and WPJ_BASE_URL must target wpjtest — this script deletes and creates users through WPJ_WP" >&2
     exit 2
@@ -140,7 +149,9 @@ echo
 # --- R36: the ownership mark is what decides, not the login and mail ------------------------
 
 echo "-- 3. R36: a forged user with the right login and mail but no mark is refused"
-if [ -z "$WP" ]; then
+if [ "$FAIL" -gt 0 ]; then
+  agent_failed "a forged user is refused by ensureActor and mintLogin"
+elif [ -z "$WP" ]; then
   skip "a forged user is refused by ensureActor and mintLogin" \
     "set WPJ_WP to a wp-cli invocation for this site, e.g. WPJ_WP=\"wp --path=/var/www/html\""
 else
@@ -186,7 +197,9 @@ is "a fabricated token sets no session cookie" \
 echo
 
 echo "-- 5. an actor whose role drifted is put back"
-if [ -z "$WP" ]; then
+if [ "$FAIL" -gt 0 ]; then
+  agent_failed "a drifted role is restored by ensureActor"
+elif [ -z "$WP" ]; then
   skip "a drifted role is restored by ensureActor" "set WPJ_WP to a wp-cli invocation for this site"
 else
   wp_cli user set-role wpj_editor subscriber >/dev/null

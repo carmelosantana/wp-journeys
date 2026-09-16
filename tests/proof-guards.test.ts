@@ -40,6 +40,30 @@ describe('the live proofs (R101)', () => {
     expect(config.use).not.toHaveProperty('screenshot');
   });
 
+  it('decide the target by the base URL\'s exact hostname, never by a substring (a host like wpjtest.evil.example would pass)', async () => {
+    for (const file of ['tests/e2e/conformance.spec.ts', 'scripts/prove-sentinel-canary.ts']) {
+      const text = await readFile(join(ROOT, file), 'utf8');
+      expect(text, file).toMatch(/new URL\([^)]*\)\.hostname/);
+      expect(text, file).toContain("'wpjtest.wp.test'");
+      expect(text, file).not.toMatch(/baseUrl\.includes\(/);
+      expect(text, file).not.toMatch(/toContain\(TARGET\)/);
+      // The wp-cli is matched word for word, not as a substring.
+      expect(text, file).not.toMatch(/wp\.includes\(TARGET\)/);
+    }
+    const shell = await readFile(join(ROOT, 'scripts', 'prove-login-minting.sh'), 'utf8');
+    expect(shell).not.toMatch(/\*wpjtest\*/);
+    expect(shell).toMatch(/\[ "\$host" = wpjtest\.wp\.test \]/);
+  });
+
+  it('never glob-expand the wp-cli words in the login-minting proof, and stop before deleting users when the agent failed', async () => {
+    const text = await readFile(join(ROOT, 'scripts', 'prove-login-minting.sh'), 'utf8');
+    expect(text).toMatch(/set -f\s*\n\s*for word in \$WP; do[\s\S]*?done\s*\n\s*set \+f/);
+    const guard = text.indexOf('agent_failed "a forged user is refused');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(text.indexOf('wp_cli user delete'));
+    expect(text.indexOf('agent_failed "a drifted role is restored')).toBeLessThan(text.indexOf('wp_cli user set-role'));
+  });
+
   it('read the runner\'s one name for wp-cli, WPJ_WP, and nothing else', async () => {
     for (const file of ['tests/e2e/conformance.spec.ts', 'scripts/prove-login-minting.sh']) {
       const text = await readFile(join(ROOT, file), 'utf8');

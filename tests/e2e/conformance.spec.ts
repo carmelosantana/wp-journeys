@@ -39,6 +39,8 @@ import { blockRenderUrl, shortcodeRenderDefect, shortcodeRenderUrl } from '../..
 const PLUGIN = 'wpj-fixture';
 /** The ONE site these proofs may mutate. They uninstall a plugin and delete a cron event. */
 const TARGET = 'wpjtest';
+/** Its host, compared EXACTLY: a substring check would accept wpjtest.evil.example. */
+const TARGET_HOST = 'wpjtest.wp.test';
 const cfg = loadConfig(process.env);
 const agent = createAgentClient(cfg.baseUrl, cfg.secret);
 const execFileAsync = promisify(execFile);
@@ -56,7 +58,16 @@ const WP_CLI = (process.env.WPJ_WP ?? '').split(' ').filter(Boolean);
  * checks it too, because afterAll runs even when beforeAll failed, and its clean-up uninstalls a
  * plugin through whatever WPJ_WP names (R101).
  */
-const TARGETS_SCRATCH = WP_CLI.includes(TARGET) && cfg.baseUrl.includes(TARGET);
+const TARGETS_SCRATCH = WP_CLI.includes(TARGET) && hostOf(cfg.baseUrl) === TARGET_HOST;
+
+/** The hostname of a URL, or '' when it does not parse. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
 
 /** Run wp-cli, failing the test if it fails. */
 async function wp(...args: string[]): Promise<void> {
@@ -93,8 +104,8 @@ test.beforeAll(async () => {
   // Structural rather than conventional: these proofs uninstall a plugin and delete a cron
   // event, and only wpjtest may be mutated. Trusting whatever WPJ_WP happens to name would
   // let one mistyped environment variable run all of that against a real site.
-  expect(WP_CLI, `WPJ_WP must target ${TARGET}`).toContain(TARGET);
-  expect(cfg.baseUrl, `WPJ_BASE_URL must target ${TARGET}`).toContain(TARGET);
+  expect(WP_CLI.includes(TARGET), `WPJ_WP must name ${TARGET} as one of its words`).toBe(true);
+  expect(hostOf(cfg.baseUrl), `WPJ_BASE_URL must point at ${TARGET_HOST}`).toBe(TARGET_HOST);
 
   // Start from a site the fixture has never been activated on (R7a): uninstall removes the
   // option, table and user meta, and the cron event is deleted by hand because the fixture's
