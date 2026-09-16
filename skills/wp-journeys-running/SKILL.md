@@ -7,7 +7,7 @@ description: Use when running the wp-journeys conformance suite (`wpj run`, `wpj
 
 ## Overview
 
-`wpj` drives a local WordPress as six actors, watches four live signals plus `debug.log`, and prints one row per journey. **A skip or a lost signal is never an ok.** A `skip` row asserted nothing. A lost signal is always a finding, so its row is red.
+`wpj` drives a local WordPress as six actors, watches four live signals plus `debug.log`, and prints one row per journey. **A skip or a lost signal is never an ok.** A skip asserted nothing; a lost signal is a finding.
 
 ## Quick reference
 
@@ -44,7 +44,7 @@ description: Use when running the wp-journeys conformance suite (`wpj run`, `wpj
 | `skip` | Its subject is absent, so it **asserted nothing**. The reason is printed. Never report this row as a pass. |
 | `· note` | A condition the row's outcome rests on. It never changes the outcome. |
 
-Two lines come before the rows. `coverage admin: X of Y` counts the journeys that ran (X) against the journeys aimed at that half of the site (Y); any gap between them is skips. `discovered:` lists what the run attributed to the plugin. What each finding kind means, and how to chase one down, is in [reading run output](references/run-output.md).
+In the header, `coverage admin: X of Y` means X of the Y journeys aimed at that half actually ran; the gap is skips. Finding kinds and how to chase them: [reading run output](references/run-output.md).
 
 ## MCP
 
@@ -55,7 +55,6 @@ Two lines come before the rows. `coverage admin: X of Y` counts the journeys tha
 | Mistake | Fix |
 |---|---|
 | Reporting "N passed" when some of those rows were `skip` | Quote the header. Passed, failed and skipped are separate counts. |
-| Running right after `wph mount` | Deactivate the plugin and delete its state first, or `lifecycle` misses the orphans. |
 | Pointing `WPJ_MANIFEST_DIR` at the plugin root | Point it at the directory that holds `wp-journeys.json`. |
 | Treating `debug.log signal unavailable` as noise | It means PHP diagnostics were **not read**. Turn on `WP_DEBUG_LOG`. |
 | `wpj could not launch Chromium` | Run `npx playwright install chromium` once. The run stopped before it touched the site. |

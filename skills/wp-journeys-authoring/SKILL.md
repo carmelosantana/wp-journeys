@@ -35,7 +35,7 @@ Put `wp-journeys.json` in any directory of the plugin, for example `tests/e2e/`,
 
 Every step-based journey for a logged-in actor first visits `/wp-admin/profile.php` as a control. The visit must be served, which proves the session is real before any denial is believed. A module gets no control visit unless it makes one.
 
-Everything is refused loudly: unknown keys, an empty list, a journey with no steps, a module plus steps, and a manifest for another plugin. Fix the message. Never work around it.
+Every schema problem is refused loudly, by name. Fix the message; never work around it.
 
 ## Common mistakes
 
@@ -44,8 +44,6 @@ Everything is refused loudly: unknown keys, an empty list, a journey with no ste
 | Expecting `deny` to be satisfied by a 404 or a 5xx | Only a 401, a 403 or the login redirect counts as a denial. A 404 means the URL is wrong, and the journey fails. |
 | `readBack` pointing at a page that never shows the setting | Point it at a frontend URL that renders the value, e.g. `/?wpj_render=%5Btag%5D`. |
 | A `readBack` page that already shows the written text | The journey fails before it writes anything, because the text appearing afterwards would prove nothing. |
-| A settings entry for a `<textarea>` with no `submit` | Add `"submit": "#submit"`. |
-| Listing a deliberately deprecated tag under `shortcodes` | Declare it under `deprecated.shortcodes` instead. |
 | A module that calls `browser.newPage()` itself | Use `runAsActor`. Without it no sentinel is armed and no session is proven. |
 
 Running the suite and reading its output are covered by **wp-journeys-running**.
