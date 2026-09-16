@@ -410,6 +410,39 @@ describe('login_as (R84, R85, R87)', () => {
     expect(text).toMatch(/\[response\] navigation to .* returned HTTP 502/);
   });
 
+  it('keeps the previous findings, closes the new context and holds no session when newPage() throws (R95b)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    h.page.navigations = [() => response(502, 'https://s.test/')];
+    await call(server, 'navigate', { path: '/' });
+    h.browser.newPageError = new Error('no page for you');
+
+    const { text, isError } = await call(server, 'login_as', { actor: 'editor' });
+
+    expect(isError).toBe(true);
+    expect(text).toMatch(/could not open a session as editor: no page for you/);
+    expect(text).toMatch(/previous session \(anonymous\)[^\n]*1 finding/);
+    expect(text).toMatch(/\[response\] navigation to .* returned HTTP 502/);
+    // The previous context and the new one are both closed.
+    expect(h.browser.closed).toEqual([true, true]);
+    expect((await call(server, 'navigate', { path: '/' })).text).toMatch(/call login_as first/);
+  });
+
+  it('names both errors when newPage() throws and its context will not close (R95b)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    h.browser.newPageError = new Error('no page for you');
+    h.browser.contextCloseError = new Error('context already gone');
+
+    const { text, isError } = await call(server, 'login_as', { actor: 'editor' });
+
+    expect(isError).toBe(true);
+    expect(text).toMatch(/could not open a session as editor: no page for you\n…and the browser context could not be closed: context already gone/);
+    expect(text).toMatch(/previous session \(anonymous\)/);
+  });
+
   it('relaunches a browser that disconnected, instead of failing every later call (C1)', async () => {
     const h = harness();
     const server = createMcpServer(h.deps);

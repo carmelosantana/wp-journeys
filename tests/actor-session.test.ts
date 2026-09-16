@@ -145,6 +145,31 @@ describe('openActorSession', () => {
     ]);
   });
 
+  it('closes the context and rethrows when the browser cannot give it a page (R95b)', async () => {
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    browser.newPageError = new Error('Target page, context or browser has been closed');
+    const { agent, calls } = fakeAgent();
+
+    await expect(openActorSession(browser.asBrowser(), CFG, agent, Actor.EDITOR))
+      .rejects.toThrow(/^Target page, context or browser has been closed$/);
+
+    expect(browser.closed).toEqual([true]);
+    expect(calls).toEqual([]);
+  });
+
+  it('names both errors when that context will not close either (R95b)', async () => {
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    browser.newPageError = new Error('no page for you');
+    browser.contextCloseError = new Error('context already gone');
+    const { agent } = fakeAgent();
+
+    await expect(openActorSession(browser.asBrowser(), CFG, agent, Actor.EDITOR))
+      .rejects.toThrow(/no page for you[\s\S]*could not be closed: context already gone/);
+    expect(browser.closed).toEqual([true]);
+  });
+
   it('says out loud when a session could not be drained, rather than reading as clean', async () => {
     const page = new FakePage();
     const browser = new FakeBrowser(page);

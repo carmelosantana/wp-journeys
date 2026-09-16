@@ -107,6 +107,8 @@ export class FakeBrowser {
 
   /** When set, the next `newContext()` rejects with it (and clears it) — a crashed browser. */
   newContextError: Error | null = null;
+  /** When set, the next context's `newPage()` rejects with it (and clears it). */
+  newPageError: Error | null = null;
   /** When set, every context's `close()` rejects with it, after recording the close attempt. */
   contextCloseError: Error | null = null;
   private connected = true;
@@ -121,7 +123,14 @@ export class FakeBrowser {
     this.options.push(options);
     const at = this.closed.push(false) - 1;
     const context = {
-      newPage: async (): Promise<Page> => this.page.asPage(),
+      newPage: async (): Promise<Page> => {
+        if (this.newPageError) {
+          const error = this.newPageError;
+          this.newPageError = null;
+          throw error;
+        }
+        return this.page.asPage();
+      },
       close: async (): Promise<void> => {
         this.closed[at] = true;
         if (this.contextCloseError) throw this.contextCloseError;
