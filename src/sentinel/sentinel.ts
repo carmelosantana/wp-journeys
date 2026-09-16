@@ -269,6 +269,13 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
       // Consumed before the navigation can throw, so a failed visit cannot leak its
       // expectation onto the next one (R40).
       const expectation = consumeExpectation();
+
+      // Settle BEFORE marking (R46). The requestfailed listener does not push at event time:
+      // it queues inspect(), and the finding lands only when request.response() resolves —
+      // commonly during the goto below. Marking first would put an EARLIER screen's finding
+      // above the truncation point, so a benign retry would discard a real defect that never
+      // belonged to the abandoned attempt.
+      await settle();
       const mark = findings.length;
 
       let response;

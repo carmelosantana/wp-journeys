@@ -529,6 +529,27 @@ describe('a retried navigation (R43)', () => {
 
     expect(await sentinel.drain()).toMatchObject([{ kind: 'console' }]);
   });
+
+  it('keeps an EARLIER screen’s async finding that only lands during the failed attempt (R46)', async () => {
+    // The test above pins only the synchronous case: a console error is pushed at event time,
+    // so it is already on the list when the mark is taken. The requestfailed listener is not
+    // like that — it queues inspect() and the finding lands when request.response() resolves,
+    // which commonly happens during the NEXT goto. Taking the mark before settling puts that
+    // finding above the truncation point, so the retry throws away a real defect from a screen
+    // the abandoned attempt never touched.
+    const { page, sentinel } = await setup();
+    page.emit('requestfailed', failedRequest('https://s.test/previous-screen.js', 'net::ERR_CONNECTION_REFUSED'));
+    page.navigations = [
+      () => { throw new Error('page.goto: net::ERR_NETWORK_CHANGED at https://s.test/next'); },
+      () => response(200, 'https://s.test/next'),
+    ];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/next');
+
+    expect(await sentinel.drain()).toMatchObject([
+      { kind: 'requestfailed', url: 'https://s.test/previous-screen.js' },
+    ]);
+  });
 });
 
 describe('a navigation with no response to assert', () => {
