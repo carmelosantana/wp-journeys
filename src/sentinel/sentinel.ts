@@ -58,10 +58,12 @@ export interface Sentinel {
  * `response`: one status on one URL, seen by both the listener and `visit()`.
  *
  * `bodyscan`: now that `visit()` and `drain()` both scan (R41), one screen that never changed
- * is scanned twice. Collapsing on the TEXT rather than the URL is what keeps that safe — the
- * text carries the severity, so a screen that later prints a WORSE diagnostic still reports it
- * as its own finding. A seen-URL guard would instead suppress that second, real defect, which
- * is the silent pass this whole class exists to prevent.
+ * is scanned twice. Collapsing on the TEXT rather than the URL is what keeps that safe — but
+ * only to the extent the text DISCRIMINATES. While it held nothing but the severity and the
+ * URL, two genuinely different diagnostics on one screen produced the same string and the
+ * second was discarded: the silent pass this de-duplication exists to avoid, reintroduced by
+ * the key it dedupes on. `scanBody` now carries the message, file and line (R63), so a screen
+ * that later prints a different — or worse — diagnostic reports it as its own finding.
  */
 function collapseKey(finding: Finding): string | null {
   // A space delimits unambiguously: the status is digits or empty, so it cannot run into

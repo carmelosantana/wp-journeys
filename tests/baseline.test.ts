@@ -4,6 +4,7 @@ import type { AgentClient, AgentStatus, LogDelta } from '../src/agent/client.ts'
 import type { Config } from '../src/config.ts';
 import type { Snapshot } from '../src/discovery/snapshot.ts';
 import type { RawRegistries } from '../src/discovery/types.ts';
+import { scanBody } from '../src/sentinel/classify.ts';
 import type { Finding } from '../src/sentinel/phplog.ts';
 import { captureBaseline, withoutBaselineNoise } from '../src/suite/baseline.ts';
 
@@ -48,6 +49,12 @@ const QUIET: string[][] = [[], [], [], []];
  */
 const BODY_WARNING =
   '<html><body>\nWarning: Undefined variable $notset in /wp-content/themes/acme/header.php on line 8\n</body></html>';
+/**
+ * A DIFFERENT warning, from a plugin rather than the theme. Same SEVERITY as the baseline's, so
+ * it is precisely the defect a severity-only noise key swallows (R63).
+ */
+const BODY_OTHER_WARNING =
+  '<html><body>\nWarning: Undefined array key "id" in /wp-content/plugins/acme/admin.php on line 12\n</body></html>';
 const CLEAN_BODY = '<html><head></head><body>home</body></html>';
 
 /**
@@ -323,32 +330,39 @@ describe('withoutBaselineNoise', () => {
     return captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
   }
 
-  it('subtracts a body diagnostic seen at a DIFFERENT url than the baseline probed (R60)', async () => {
+  it('subtracts the SAME body diagnostic seen at a DIFFERENT url than the baseline probed (R60)', async () => {
     // The design question. `scanBody` embeds the url in the finding's text, and the baseline
     // probes only the site root — so keying the subtraction on the whole text would never match
     // the same per-request warning seen on /wp-admin/, and the false red would survive
     // everywhere except the home page. The key must be url-independent.
+    //
+    // Built THROUGH scanBody rather than by hand, so this asserts against the real finding shape
+    // instead of a guess at it — which is how the R63 collapse hid here in the first place.
     const captured = await baselineWithBodyNoise();
-    const findings: Finding[] = [{
-      kind: 'bodyscan',
-      url: 'https://s.test/wp-admin/options-general.php',
-      text: 'PHP Warning printed into the response body at https://s.test/wp-admin/options-general.php',
-    }];
+    const sameDefectElsewhere = scanBody(BODY_WARNING, 'https://s.test/wp-admin/options-general.php');
 
-    expect(withoutBaselineNoise(findings, captured)).toEqual([]);
+    expect(withoutBaselineNoise([sameDefectElsewhere!], captured)).toEqual([]);
+  });
+
+  it('KEEPS a different warning of the same severity — the defect a severity-only key swallows (R63)', async () => {
+    // The critical regression. The baseline's per-request noise is a theme `Undefined variable`;
+    // the plugin under test prints an `Undefined array key` on its own settings screen. Both are
+    // `Warning`, so a key that survives URL-stripping as nothing but the severity word matches
+    // them and deletes a genuine defect — silently, at every URL, for the whole run.
+    const captured = await baselineWithBodyNoise();
+    const genuineDefect = scanBody(BODY_OTHER_WARNING, 'https://s.test/wp-admin/admin.php?page=acme');
+
+    expect(withoutBaselineNoise([genuineDefect!], captured)).toEqual([genuineDefect]);
   });
 
   it('keeps a body diagnostic of a severity the baseline never saw', async () => {
-    // The url-independent key must not collapse every bodyscan into one bucket: a fatal on a
-    // site whose per-request noise is a warning is the plugin under test, and it must survive.
+    // The weaker case, kept because it is still true: a fatal on a site whose per-request noise
+    // is a warning is the plugin under test. It passes even with a severity-only key, which is
+    // exactly why contrasting a Warning with a Fatal could not have caught R63.
     const captured = await baselineWithBodyNoise();
-    const findings: Finding[] = [{
-      kind: 'bodyscan',
-      url: 'https://s.test/wp-admin/',
-      text: 'PHP Fatal error printed into the response body at https://s.test/wp-admin/',
-    }];
+    const fatal = scanBody('Fatal error: Uncaught Error: boom', 'https://s.test/wp-admin/');
 
-    expect(withoutBaselineNoise(findings, captured)).toEqual(findings);
+    expect(withoutBaselineNoise([fatal!], captured)).toEqual([fatal]);
   });
 
   it('drops EVERY occurrence of a per-request diagnostic, not just the first', async () => {

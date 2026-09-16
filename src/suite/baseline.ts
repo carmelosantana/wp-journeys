@@ -61,9 +61,16 @@ interface Sample {
  * A body finding reduced to what is comparable across URLs.
  *
  * `scanBody` puts the URL it scanned inside `text`, so two sightings of one per-request warning
- * differ by exactly that. Replacing the finding's own URL with a placeholder leaves the part
- * that identifies the diagnostic — its severity — while keeping different diagnostics apart, so
- * a fatal is never subtracted because the site happens to emit a warning on every request.
+ * differ by exactly that. Replacing the finding's own URL with a placeholder is what makes them
+ * compare equal — the baseline only ever probes the site root, so a whole-text key would never
+ * match the same warning seen on `/wp-admin/`.
+ *
+ * WHAT MUST SURVIVE THAT STRIPPING (R63). Everything identifying the defect — message, file and
+ * line — because whatever is left IS the key. While `scanBody`'s text held only the severity and
+ * the URL, stripping the URL left the bare word `Warning`, and a per-request theme warning
+ * observed once by the baseline then deleted a plugin's genuine `Undefined array key` from every
+ * journey at every URL, silently and run-wide. R48's twice-sampled rule is no guard here: it
+ * governs what ENTERS the noise set, never how much a single entry then matches.
  */
 function bodyNoiseKey(finding: Finding): string {
   return finding.url ? finding.text.split(finding.url).join('<url>') : finding.text;

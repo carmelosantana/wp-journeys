@@ -468,6 +468,29 @@ describe('body cover across a whole journey (R41)', () => {
 
     expect(await sentinel.drain()).toHaveLength(1);
   });
+
+  it('keeps TWO DIFFERENT diagnostics on one screen as two findings (R63)', async () => {
+    // `collapseKey` de-duplicates a bodyscan on its TEXT. While that text was built from the
+    // severity and the URL alone, two genuinely different defects on one screen produced the
+    // same string and the second was discarded — a silent pass of exactly the kind the
+    // de-duplication was written to avoid. The same impoverished text is what let the baseline
+    // noise key swallow real defects, so one fix settles both.
+    const other = '<br />\n<b>Warning</b>:  Undefined array key "id" in <b>/other.php</b> on line <b>99</b><br />';
+    const { page, sentinel } = await setup();
+    page.navigations = [lands(page, 'https://s.test/only', PRINTED_WARNING)];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/only');
+    // The same screen prints a second, different diagnostic after it loaded.
+    page.body = other;
+
+    const findings = await sentinel.drain();
+
+    expect(findings).toHaveLength(2);
+    expect(findings.map((f) => f.text)).toEqual([
+      expect.stringContaining('boom in /acme.php on line 1'),
+      expect.stringContaining('Undefined array key "id" in /other.php on line 99'),
+    ]);
+  });
 });
 
 describe('navigation wording wins the de-duplication (R42)', () => {

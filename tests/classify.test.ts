@@ -210,6 +210,56 @@ describe('scanBody', () => {
 
   it('names the severity it found, so the summary line is self-contained', () => {
     expect(scanBody('Fatal error: Uncaught Error: boom', '/wp-admin/')?.text)
-      .toBe('PHP Fatal error printed into the response body at /wp-admin/');
+      .toBe('PHP Fatal error printed into the response body at /wp-admin/: Uncaught Error: boom');
+  });
+
+  it('carries the MESSAGE, FILE and LINE it matched, not just the severity (R63)', () => {
+    // The finding text is the only thing downstream has to tell one body diagnostic from
+    // another. `withoutBaselineNoise` keys on it with the URL stripped, so a text built from
+    // severity and URL alone reduces to the bare severity word — and every `Warning` the site
+    // ever printed collapses into one key, subtracting real defects run-wide.
+    const finding = scanBody(
+      'Warning: Undefined array key "id" in /wp-content/plugins/acme/admin.php on line 12\n',
+      'https://s.test/wp-admin/admin.php?page=acme',
+    );
+
+    expect(finding?.text).toContain('Undefined array key "id"');
+    expect(finding?.text).toContain('/wp-content/plugins/acme/admin.php');
+    expect(finding?.text).toContain('on line 12');
+  });
+
+  it('gives two DIFFERENT warnings on one URL two different texts (R63)', () => {
+    // The discriminating property, stated directly. Same severity, same URL, different defect:
+    // if these two texts are equal then the noise key cannot separate them and neither can the
+    // sentinel's own de-duplication.
+    const url = 'https://s.test/';
+    const theme = scanBody('Warning: Undefined variable $notset in /wp-content/themes/acme/header.php on line 8\n', url);
+    const plugin = scanBody('Warning: Undefined array key "id" in /wp-content/plugins/acme/admin.php on line 12\n', url);
+
+    expect(theme?.text).not.toBe(plugin?.text);
+  });
+
+  it('normalises the html_errors=1 form, so markup never reaches the summary', () => {
+    const body = '<br />\n<b>Warning</b>:  Undefined variable $x in <b>/acme.php</b> on line <b>7</b><br />';
+    const finding = scanBody(body, '/');
+
+    expect(finding?.text).toBe(
+      'PHP Warning printed into the response body at /: Undefined variable $x in /acme.php on line 7',
+    );
+    expect(finding?.text).not.toContain('<b>');
+  });
+
+  it('redacts a minted token that appears in the MESSAGE, not only in the url (R51)', () => {
+    // A diagnostic can quote the request URI it was raised on, which at the login step carries
+    // the token. Redacting only the `url` field would still write the credential into `text`.
+    // The token sits INSIDE the matched span — before the ` in <path> on line N` the pattern
+    // anchors on — so it really does reach the message, rather than being trimmed off by luck.
+    const finding = scanBody(
+      'Warning: Undefined array key "/?wpj_login=SECRETTOKENabcdef0123456789abcd" in /acme.php on line 1\n',
+      '/',
+    );
+
+    expect(finding?.text).toContain('<REDACTED>');
+    expect(JSON.stringify(finding)).not.toContain('SECRETTOKEN');
   });
 });

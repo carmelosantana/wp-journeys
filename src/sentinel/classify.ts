@@ -177,18 +177,48 @@ const SEVERITY = 'Warning|Notice|Deprecated|Fatal error|Parse error|Recoverable 
 const BODY_DIAGNOSTIC = new RegExp(
   `<b>(?:${SEVERITY})<\\/b>:[\\s\\S]*?<b>[^<]*<\\/b> on line <b>\\d+<\\/b>` +
     `|^(?:${SEVERITY}): [\\s\\S]*? in (?:\\/[^\\s]+|Unknown|Command line code) on line \\d+` +
-    `|(?:${SEVERITY}): Uncaught `,
+    // To end of line, not just the `Uncaught ` prefix: the exception class and message are the
+    // only thing distinguishing one uncaught fatal from another (R63).
+    `|(?:${SEVERITY}): Uncaught [^\\n]*`,
   'm',
 );
 
+/** Summary text: no markup (the html_errors=1 form is full of it), no runs of whitespace. */
+function readableDiagnostic(text: string): string {
+  return text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The matched diagnostic is CARRIED, not discarded (R63).
+ *
+ * The regex already has the message, file and line in hand. Building the finding text from the
+ * severity and the URL alone threw all of that away, and the text is the only thing downstream
+ * has to tell one body diagnostic from another — `withoutBaselineNoise` keys on it with the URL
+ * stripped out, and the sentinel's own de-duplication keys on it whole.
+ *
+ * With only severity and URL in the text, both keys reduced to the bare severity word. Every
+ * `Warning` the site ever printed collapsed into one key: a per-request theme warning observed
+ * once by the baseline then deleted a plugin's genuine `Undefined array key` from every journey
+ * at every URL, silently, and two different diagnostics on one screen de-duplicated into one.
+ *
+ * So the format is not cosmetic. Whatever identifies the defect must survive URL-stripping.
+ */
 export function scanBody(body: string, url: string): Finding | null {
   if (!body) return null;
   const hit = BODY_DIAGNOSTIC.exec(body);
   if (!hit) return null;
-  const severity = new RegExp(`(${SEVERITY})`).exec(hit[0])?.[1] ?? 'diagnostic';
+
+  const readable = readableDiagnostic(hit[0]);
+  const severity = new RegExp(`(${SEVERITY})`).exec(readable)?.[1] ?? 'diagnostic';
+  // The severity is named in the sentence already, so the message carries the rest.
+  const message = readable.startsWith(`${severity}:`)
+    ? readable.slice(severity.length + 1).trim()
+    : readable;
   const safe = redactLoginToken(url);
   return {
     kind: 'bodyscan', url: safe,
-    text: `PHP ${severity} printed into the response body at ${safe}`,
+    // Redacted like every other finding, and on the MESSAGE too: a diagnostic can quote the
+    // request URI it was raised on, which at the login step carries the token (R51).
+    text: `PHP ${severity} printed into the response body at ${safe}: ${redactLoginToken(message)}`,
   };
 }
