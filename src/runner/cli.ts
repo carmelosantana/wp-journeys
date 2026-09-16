@@ -46,7 +46,8 @@ const SLUG = /^[a-z0-9][a-z0-9._-]*$/;
 export type ParsedArgs = { ok: true; plugin: string } | { ok: false; reason: string };
 
 /**
- * The runner has exactly one command today. An unrecognised one is refused rather than
+ * The `run` command's arguments (`mcp` takes none, and `main` routes it before this is called).
+ * An unrecognised command is refused rather than
  * defaulted: `wpj skills install` arrives in Task 16, and quietly running the conformance suite
  * because the first word was not understood would be a surprising and destructive answer.
  */
@@ -325,6 +326,7 @@ function usage(reason: string): void {
     `${reason}\n\n` +
       'usage:\n' +
       '  wpj run --plugin <slug>    run the conformance suite against a plugin\n' +
+      '  wpj mcp                    serve the runner as MCP tools over stdio\n' +
       '\nenvironment:\n' +
       '  WPJ_BASE_URL      the target site; local hostnames only\n' +
       '  WPJ_AGENT_SECRET  the shared secret the companion mu-plugin expects\n' +
@@ -354,6 +356,18 @@ export async function main(
   env: NodeJS.ProcessEnv = process.env,
   createAgent: (baseUrl: string, secret: string) => AgentClient = createAgentClient,
 ): Promise<number> {
+  // Before parseArgs, config and everything else: the server must start even when configuration
+  // is broken (R89), and in this mode stdout belongs to the protocol alone (R90).
+  if (argv[0] === 'mcp') {
+    if (argv.length > 1) {
+      usage(`unexpected argument ${JSON.stringify(argv[1])} — wpj mcp takes no arguments`);
+      return 2;
+    }
+    const { serve } = await import('../mcp/server.ts');
+    await serve(undefined, { env, createAgent, launchBrowser: () => chromium.launch() });
+    return 0;
+  }
+
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
     usage(parsed.reason);

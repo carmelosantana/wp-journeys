@@ -143,6 +143,40 @@ describe('the wpj entry point', () => {
   });
 });
 
+describe('wpj mcp (R90)', () => {
+  const wpj = fileURLToPath(new URL('../bin/wpj.js', import.meta.url));
+
+  it('answers the brief\'s tools/list handshake with only JSON-RPC on stdout, even with no configuration', () => {
+    const result = spawnSync(process.execPath, [wpj, 'mcp'], {
+      encoding: 'utf8',
+      input: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n',
+      // R89: the server starts with configuration missing entirely.
+      env: { PATH: process.env.PATH ?? '' },
+    });
+
+    expect(result.status).toBe(0);
+    const frames = result.stdout.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    expect(frames).toHaveLength(1);
+    expect(frames[0].id).toBe(1);
+    expect(frames[0].result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      'discover_surface', 'drain_sentinel', 'login_as', 'navigate', 'read_page', 'run_journey', 'status',
+    ]);
+  });
+
+  it('refuses an argument it does not take, on stderr', () => {
+    const result = spawnSync(process.execPath, [wpj, 'mcp', '--plugin', 'acme'], { encoding: 'utf8', input: '' });
+
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toMatch(/wpj mcp takes no arguments/);
+  });
+
+  it('is named in usage', () => {
+    const result = spawnSync(process.execPath, [wpj], { encoding: 'utf8' });
+    expect(result.stderr).toMatch(/wpj mcp +serve the runner as MCP tools over stdio/);
+  });
+});
+
 describe('wpCommands', () => {
   it('builds the toggle commands against the operator’s wp-cli command', () => {
     const cmds = wpCommands('wp --path=/srv', 'acme');
