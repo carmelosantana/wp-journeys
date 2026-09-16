@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { Actor } from '../src/actors/roles.ts';
 import { outcomeOf, register } from '../src/journeys/index.ts';
-import type { Journey, JourneyResult, SurfaceAxis } from '../src/journeys/types.ts';
+import type { Journey, JourneyResult, Outcome, SurfaceAxis } from '../src/journeys/index.ts';
 
 function result(over: Partial<JourneyResult> = {}): JourneyResult {
   return {
@@ -13,7 +13,10 @@ function result(over: Partial<JourneyResult> = {}): JourneyResult {
 
 describe('outcomeOf', () => {
   it('is pass when nothing was found and nothing was skipped', () => {
-    expect(outcomeOf(result())).toBe('pass');
+    // Annotated so the exported Outcome name is exercised: the summary renderer and the CLI
+    // exit code both consume it, and they must not re-declare or widen it.
+    const outcome: Outcome = outcomeOf(result());
+    expect(outcome).toBe('pass');
   });
 
   it('is fail when the sentinel found anything', () => {

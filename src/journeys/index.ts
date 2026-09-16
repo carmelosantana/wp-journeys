@@ -1,7 +1,7 @@
 /** The journey registry and the single definition of a run's outcome. */
-import type { Journey, JourneyResult } from './types.ts';
+import type { Journey, JourneyResult, Outcome } from './types.ts';
 
-export type { Journey, JourneyResult, SurfaceAxis } from './types.ts';
+export type { Journey, JourneyResult, Outcome, SurfaceAxis } from './types.ts';
 
 /**
  * The ONE place pass/fail/skip is decided.
@@ -13,7 +13,7 @@ export type { Journey, JourneyResult, SurfaceAxis } from './types.ts';
  * read as a pass. Nothing downstream can tell that shape from a clean run, so the one place
  * that could catch it must throw (R39).
  */
-export function outcomeOf(result: JourneyResult): 'pass' | 'fail' | 'skip' {
+export function outcomeOf(result: JourneyResult): Outcome {
   if (result.skipReason !== undefined && result.skipped !== true) {
     throw new Error(
       `journey "${result.name}" carries skipReason "${result.skipReason}" without skipped: true — a half-declared skip would render as a pass.`,

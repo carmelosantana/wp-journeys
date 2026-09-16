@@ -13,6 +13,12 @@ import type { Finding } from '../sentinel/phplog.ts';
  */
 export type SurfaceAxis = 'admin' | 'frontend' | 'both';
 
+/**
+ * The three outcomes of a run, named once so the summary renderer and the CLI exit code
+ * consume the same closed set instead of re-declaring it or widening it to `string`.
+ */
+export type Outcome = 'pass' | 'fail' | 'skip';
+
 /** The outcome of one journey run. */
 export interface JourneyResult {
   name: string;
