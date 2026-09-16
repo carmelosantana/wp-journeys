@@ -70,11 +70,9 @@ function wpj_agent_dispatch($request) {
                 'php' => PHP_VERSION,
                 'debugLog' => defined('WP_DEBUG_LOG') && WP_DEBUG_LOG,
             );
-            $plugin = (string) wpj_agent_arg($request, 'plugin', '');
-            if ($plugin !== '') {
-                $status['pluginActive'] = wpj_plugin_slug_active($plugin, get_option('active_plugins'));
-            }
-            return $status;
+            return array_merge($status, wpj_plugin_active_field(
+                (string) wpj_agent_arg($request, 'plugin', ''), get_option('active_plugins')
+            ));
         case 'snapshot':
             return wpj_snapshot((string) wpj_agent_arg($request, 'plugin', ''));
         case 'logDelta':

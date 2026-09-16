@@ -69,6 +69,11 @@ describe('lifecycle: what its orphan check can see (R75)', () => {
 
     expect(outcomeOf(result)).toBe('fail');
     expect(JSON.stringify(result.findings)).toContain('options=acme_version');
+    // A red row prints no skipReason, so the caveat must travel as a note: this orphan list can
+    // be INCOMPLETE, because whatever activation created was already in the baseline.
+    expect(result.notes).toEqual([expect.stringMatching(
+      /orphans listed here may be incomplete: acme was already active when the baseline was taken/,
+    )]);
   });
 
   it('may pass when the plugin was inactive at the baseline, but states the precondition it rests on', async () => {

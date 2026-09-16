@@ -77,12 +77,14 @@ export function lifecycle(plugin: string, baseline: Baseline, uninstall: () => P
       // proves nothing. A skip, never an ok — and orphans it found anyway still fail, because a
       // finding wins over a skip in outcomeOf.
       if (!baseline.activeAtStart) return result;
-      return {
-        ...result,
-        skipped: true,
-        skipReason: `${plugin} was already active when the baseline was taken, so state its activation created `
-          + 'predates the baseline and its leftovers are invisible — run on a site where it was never activated',
-      };
+      const why = `${plugin} was already active when the baseline was taken, so state its activation created `
+        + 'predates the baseline and its leftovers are invisible — run on a site where it was never activated';
+      if (result.findings.length > 0) {
+        // A red row prints no skipReason, so the caveat travels as a note: the orphans it lists
+        // are real, but the list may be incomplete.
+        return { ...result, notes: [...(result.notes ?? []), `orphans listed here may be incomplete: ${why}`] };
+      }
+      return { ...result, skipped: true, skipReason: why };
     },
   };
 }

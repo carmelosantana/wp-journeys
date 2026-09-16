@@ -15,14 +15,13 @@ function wpj_snapshot($plugin = '') {
     sort($options); sort($tables); sort($meta_keys);
 
     $cron = wpj_snapshot_cron_hooks(_get_cron_array());
-    return array(
+    return array_merge(array(
         'options' => $options,
         'tables' => $tables,
         'cron' => $cron,
         'userMeta' => $meta_keys,
         'cronCore' => wpj_snapshot_core_hooks($cron, wpj_snapshot_callbacks_by_hook($cron), wpj_core_dirs()),
-        'pluginActive' => wpj_plugin_slug_active((string) $plugin, get_option('active_plugins')),
-    );
+    ), wpj_plugin_active_field((string) $plugin, get_option('active_plugins')));
 }
 
 /**
@@ -199,4 +198,19 @@ function wpj_plugin_slug_active($slug, $active_plugins) {
         }
     }
     return false;
+}
+
+/**
+ * The `pluginActive` field, or nothing at all when no plugin was asked about. The runner reads an
+ * ABSENT field as "unknown"; `false` would claim the plugin is known to be inactive.
+ *
+ * @param string $slug
+ * @param mixed  $active_plugins
+ * @return array
+ */
+function wpj_plugin_active_field($slug, $active_plugins) {
+    if ($slug === '') {
+        return array();
+    }
+    return array('pluginActive' => wpj_plugin_slug_active($slug, $active_plugins));
 }
