@@ -5,7 +5,7 @@ only JSON-RPC. It starts even when configuration is broken; in that case, every 
 the site answers with the configuration error. It reads the same variables as `wpj run`.
 
 ```json
-{ "mcpServers": { "wp-journeys": { "command": "wpj", "args": ["mcp"],
+{ "mcpServers": { "wp-journeys": { "command": "node", "args": ["/path/to/wp-journeys/bin/wpj.js", "mcp"],
   "env": { "WPJ_BASE_URL": "https://site.wp.test", "WPJ_AGENT_SECRET": "…", "WPJ_WP": "wp --path=/srv/site" } } } }
 ```
 

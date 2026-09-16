@@ -12,15 +12,21 @@ import type { Browser } from '@playwright/test';
 export const MISSING_BROWSER =
   'wpj could not launch Chromium: Playwright\'s browser is not installed. Run `npx playwright install chromium` once, then run wpj again.';
 
-/** Playwright's own wording for a browser binary that is not on disk. */
-const NOT_ON_DISK = /Executable doesn't exist/;
+/**
+ * Playwright's own wording for a browser binary that is not on disk, and the path it looked at:
+ * the rest of that first line. The path is what makes a PLAYWRIGHT_BROWSERS_PATH mismatch
+ * visible, so it stays in the one line.
+ */
+const NOT_ON_DISK = /Executable doesn't exist(?: at ([^\r\n]+))?/;
 
 export async function launchChromium(launch: () => Promise<Browser> = () => chromium.launch()): Promise<Browser> {
   try {
     return await launch();
   } catch (error) {
-    if (error instanceof Error && NOT_ON_DISK.test(error.message)) {
-      throw new Error(MISSING_BROWSER, { cause: error });
+    const missing = error instanceof Error ? NOT_ON_DISK.exec(error.message) : null;
+    if (missing) {
+      const where = missing[1] ? ` Playwright looked for it at ${missing[1].trim()}` : '';
+      throw new Error(`${MISSING_BROWSER}${where}`, { cause: error });
     }
     throw error;
   }

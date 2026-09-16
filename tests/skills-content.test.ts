@@ -110,6 +110,12 @@ describe('the running skill', () => {
     expect(text).toMatch(/wph mount.*activates/s);
   });
 
+  it('configures MCP with node and the clone path, since `wpj` is not on PATH (R103)', async () => {
+    const text = await read(join(RUNNING, 'references', 'mcp.md'));
+    expect(text).not.toMatch(/"command":\s*"wpj"/);
+    expect(text).toContain('"command": "node", "args": ["/path/to/wp-journeys/bin/wpj.js", "mcp"]');
+  });
+
   it('names all six actors', async () => {
     const text = await read(join(RUNNING, 'references', 'run-output.md'));
     for (const actor of ALL_ACTORS) expect(text).toContain(`\`${actor}\``);

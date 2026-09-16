@@ -20,12 +20,18 @@ describe('launchChromium', () => {
 
     expect(error).toBeInstanceOf(Error);
     const message = (error as Error).message;
-    expect(message).toBe(MISSING_BROWSER);
+    // Where Playwright looked, so a PLAYWRIGHT_BROWSERS_PATH mismatch can be seen (R103).
+    expect(message).toBe(`${MISSING_BROWSER} Playwright looked for it at /home/u/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell`);
     expect(message).toContain('npx playwright install chromium');
     expect(message).not.toContain('\n');
     expect(message).not.toContain('╔');
     // The original is kept as the cause, so nothing is lost for someone debugging.
     expect(((error as Error).cause as Error).message).toBe(PLAYWRIGHT_MISSING);
+  });
+
+  it('still gives the one line when the message names no path', async () => {
+    const error = await launchChromium(() => Promise.reject(new Error('Executable doesn\'t exist'))).catch((e: unknown) => e);
+    expect((error as Error).message).toBe(MISSING_BROWSER);
   });
 
   it('passes any other launch failure through untouched', async () => {
