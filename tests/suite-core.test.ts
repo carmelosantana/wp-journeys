@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { Actor } from '../src/actors/roles.ts';
+import { ALL_ACTORS, Actor } from '../src/actors/roles.ts';
 import { surfaceDelta } from '../src/discovery/surface.ts';
 import { outcomeOf } from '../src/journeys/index.ts';
 import { accessMatrix } from '../src/suite/admin-access-matrix.ts';
-import { conformanceSurface } from '../src/suite/index.ts';
+import { conformanceSurface, coreSuite } from '../src/suite/index.ts';
 import { adminSweep, shortcodeRender } from '../src/suite/rendered-surface.ts';
 import type { Surface } from '../src/discovery/types.ts';
 
@@ -89,6 +89,40 @@ describe('conformanceSurface', () => {
 
     const corrected = accessMatrix(conformanceSurface(before, after), [Actor.ADMINISTRATOR]);
     expect(corrected[0]?.denyExpected).toBe(false);
+  });
+});
+
+describe('coreSuite', () => {
+  const baseline = {
+    surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
+    snapshot: { options: [], tables: [], cron: [], userMeta: [] },
+    logNoise: [],
+  };
+
+  it('registers the shared journeys plus one admin sweep per actor', () => {
+    // register() refuses duplicate names, because the name is the registry key — so a naming
+    // scheme that collided between two actors would drop a journey silently without it.
+    const suite = coreSuite('acme', delta, baseline, async () => {});
+
+    expect(Object.keys(suite).sort()).toEqual([
+      'admin-sweep:acme:administrator',
+      'admin-sweep:acme:anonymous',
+      'admin-sweep:acme:author',
+      'admin-sweep:acme:contributor',
+      'admin-sweep:acme:editor',
+      'admin-sweep:acme:subscriber',
+      'frontend-renders',
+      'lifecycle:acme',
+      'shortcode-render:acme',
+    ]);
+  });
+
+  it('binds every journey to the actor its name claims', () => {
+    const suite = coreSuite('acme', delta, baseline, async () => {});
+
+    for (const actor of ALL_ACTORS) {
+      expect(suite[`admin-sweep:acme:${actor}`]?.actor).toBe(actor);
+    }
   });
 });
 
