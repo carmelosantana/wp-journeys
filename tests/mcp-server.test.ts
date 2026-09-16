@@ -234,6 +234,17 @@ describe('lifecycle of the server (R85, R90)', () => {
     expect(stderr).not.toContain(TOKEN);
   });
 
+  it('still closes the browser when closing the session fails (M7)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    h.browser.contextCloseError = new Error('context already gone');
+
+    await expect(server.shutdown()).rejects.toThrow(/context already gone/);
+
+    expect(h.browser.browserClosed).toBe(1);
+  });
+
   it('closes nothing it never opened', async () => {
     const h = harness();
     await converse([JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })], h.deps);

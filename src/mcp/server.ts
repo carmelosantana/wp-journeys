@@ -350,11 +350,15 @@ export function createMcpServer(deps: McpDeps) {
   async function shutdown(): Promise<void> {
     const session = current;
     current = null;
-    if (session !== null) await session.close();
-    if (browser !== null) {
-      const open = browser;
-      browser = null;
-      await (await open).close();
+    try {
+      if (session !== null) await session.close();
+    } finally {
+      // Even when the context would not close (M7): an orphaned browser outlives the server.
+      if (browser !== null) {
+        const open = browser;
+        browser = null;
+        await (await open).close();
+      }
     }
   }
 
