@@ -55,8 +55,8 @@ Each finding is one of three kinds:
 This was a contract gap, found before the first run. The brief treated "the plugin directory" as
 one path. On Alpaca Bot it is two:
 
-- **The mount path** is the plugin root, `<plugin checkout>`.
-  wp-harness mounts this path. (`<brand-assets folder>` itself is a folder of brand assets, not a
+- **The mount path** is the plugin root, `<Alpaca Bot checkout>/wp-alpaca/plugins/alpaca-bot`.
+  wp-harness mounts this path. (The checkout root itself is a folder of brand assets, not a
   plugin.)
 - **The manifest directory** is `.../alpaca-bot/tests/e2e`. `loadManifest` reads
   `wp-journeys.json` from here, and `interpret()` resolves escape-hatch module paths against it
@@ -85,11 +85,12 @@ because `lifecycle` uninstalls the plugin every other journey needs.
 The working invocation:
 
 ```bash
+ALPACA_BOT="/path/to/alpaca-bot"               # your Alpaca Bot checkout
 WPH="${WPH:-wph}"                              # the wp-harness CLI
-$WPH mount wpjtest plugin alpaca-bot "$HOME/Projects/Alpaca Bot/wp-alpaca/plugins/alpaca-bot"
+$WPH mount wpjtest plugin alpaca-bot "$ALPACA_BOT/wp-alpaca/plugins/alpaca-bot"
 set -a; . ./.env; set +a                       # WPJ_BASE_URL, WPJ_AGENT_SECRET
 export WPJ_WP="$WPH wp wpjtest --"
-export WPJ_MANIFEST_DIR="$HOME/Projects/Alpaca Bot/wp-alpaca/plugins/alpaca-bot/tests/e2e"
+export WPJ_MANIFEST_DIR="$ALPACA_BOT/wp-alpaca/plugins/alpaca-bot/tests/e2e"
 node bin/wpj.js run --plugin alpaca-bot
 ```
 

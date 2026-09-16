@@ -215,12 +215,20 @@ describe('the authoring skill', () => {
       /Trusting a 2xx on a write/,
       /lost `debug\.log` signal reported as an empty delta/,
       /Discovery without a deactivated baseline/,
-      /refused login token read as a session \(R54\)/,
-      /orphan check blind after an activating mount \(R75\)/,
-      /cron handler trusted without checking where it came from \(R79\)/,
+      /refused login token read as a session/,
+      /orphan check blind after an activating mount/,
+      /cron handler trusted without checking where it came from/,
       /for the right reason/,
     ]) {
       expect(text).toMatch(phrase);
+    }
+  });
+});
+
+describe('the skills read cleanly without the decision log', () => {
+  it('carry no bare decision ids: a reader who never saw the log cannot follow one', async () => {
+    for (const file of [...await markdownOf(RUNNING), ...await markdownOf(AUTHORING)]) {
+      expect(await read(file), file).not.toMatch(/\bR\d{1,3}[a-z]?\b/);
     }
   });
 });

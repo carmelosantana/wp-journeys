@@ -113,6 +113,7 @@ deletes nothing and exits 1.
 | Your own journeys: settings round-trips, expected denials, gates, declared deprecations | `wp-journeys.json`. Start from `assets/wp-journeys.example.json`, and use the **wp-journeys-authoring** skill. |
 | Why a green row might have proved nothing | `skills/wp-journeys-authoring/references/false-greens.md` |
 | A worked example against a real plugin | [docs/first-contact.md](docs/first-contact.md) |
+| What a decision id such as `R45` in the code means | [docs/decisions.md](docs/decisions.md) |
 
 ## Distribution
 

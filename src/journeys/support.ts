@@ -186,7 +186,7 @@ export async function openActorSession(
 
   /**
    * A session that will not be handed over is closed here — and a close that fails is one more
-   * finding, never a replacement for the findings that explain the refusal (C1).
+   * finding, never a replacement for the findings that explain the refusal.
    */
   const refuse = async (findings: Finding[]): Promise<OpenedSession> => {
     try {

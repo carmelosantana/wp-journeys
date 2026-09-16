@@ -412,7 +412,7 @@ describe('scanBody', () => {
   });
 });
 
-describe('redactLoginToken, percent-encoded (M2)', () => {
+describe('redactLoginToken, percent-encoded', () => {
   it('redacts a token nested inside redirect_to, in either encoded separator and any case', () => {
     const nested = 'https://s.test/wp-login.php?redirect_to=https%3A%2F%2Fs.test%2F%3Fwpj_login%3DTOKEN-1%26x%3D1';
     expect(redactLoginToken(nested)).toBe(

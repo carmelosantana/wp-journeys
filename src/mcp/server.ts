@@ -143,7 +143,7 @@ export function createMcpServer(deps: McpDeps) {
 
   /**
    * The browser, launched on first use (R90). Neither a failed launch nor a browser that has gone
-   * away is remembered (C1): a crashed browser would otherwise fail every later call for good.
+   * away is remembered: a crashed browser would otherwise fail every later call for good.
    */
   async function launched(): Promise<Browser> {
     if (browser !== null) {
@@ -261,7 +261,7 @@ export function createMcpServer(deps: McpDeps) {
         opened = await openActorSession(target, cfg, agent, actor as Actor);
       } catch (error) {
         // The previous session is already drained and closed: its findings exist only here now,
-        // so a throw must not take them with it (C1, R85).
+        // so a throw must not take them with it (R85).
         return carrying(previous, { isError: true, text: `could not open a session as ${actor}: ${messageOf(error)}` });
       }
       if (!opened.ok) {
@@ -321,7 +321,7 @@ export function createMcpServer(deps: McpDeps) {
     },
 
     async run_journey(args) {
-      // A held session is retired FIRST (M4): its sentinel's log window would otherwise take in
+      // A held session is retired FIRST: its sentinel's log window would otherwise take in
       // the baseline and the run, and attribute their lines to the held actor — unsubtracted.
       // Its findings travel with this result, whatever the result is (R85).
       const previous = await retire();
@@ -381,7 +381,7 @@ export function createMcpServer(deps: McpDeps) {
     try {
       if (session !== null) await session.close();
     } finally {
-      // Even when the context would not close (M7): an orphaned browser outlives the server.
+      // Even when the context would not close: an orphaned browser outlives the server.
       if (browser !== null) {
         const open = browser;
         browser = null;
@@ -394,7 +394,7 @@ export function createMcpServer(deps: McpDeps) {
 }
 
 /**
- * While serving on the real stdout, nothing but frames may reach it (I1, R90) — and code the
+ * While serving on the real stdout, nothing but frames may reach it (R90) — and code the
  * server does not own runs inside it: an escape-hatch journey module, and whatever that pulls in.
  *
  * So frames are written through a private reference to stdout's own `write`, and every other

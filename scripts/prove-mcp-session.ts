@@ -51,7 +51,7 @@ const wpj = fileURLToPath(new URL('../bin/wpj.js', import.meta.url));
 const child = spawn(process.execPath, [wpj, 'mcp'], { stdio: ['pipe', 'pipe', 'inherit'], env: process.env });
 
 /**
- * A hung server fails the proof rather than hanging it (M9). Two minutes is several times a
+ * A hung server fails the proof rather than hanging it. Two minutes is several times a
  * normal run, which is mostly one browser launch and a few page loads.
  */
 const TIMEOUT_MS = Number(process.env.WPJ_PROOF_TIMEOUT_MS ?? 120_000);

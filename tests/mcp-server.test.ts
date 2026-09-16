@@ -175,7 +175,7 @@ describe('the protocol (R91)', () => {
   });
 });
 
-describe('stdout belongs to the protocol, whatever a tool\'s code prints (I1, R90)', { timeout: SPAWN_TIMEOUT_MS }, () => {
+describe('stdout belongs to the protocol, whatever a tool\'s code prints (R90)', { timeout: SPAWN_TIMEOUT_MS }, () => {
   it('diverts console and direct stdout writes to stderr while serving on process.stdout', () => {
     const fixture = fileURLToPath(new URL('./fixtures/mcp-noisy-server.ts', import.meta.url));
     const result = spawnSync(process.execPath, [fixture], {
@@ -223,7 +223,7 @@ describe('lifecycle of the server (R85, R90)', () => {
     expect(h.browser.browserClosed).toBe(1);
   });
 
-  it('scrubs the secret and any token from a shutdown failure written to stderr (M1)', async () => {
+  it('scrubs the secret and any token from a shutdown failure written to stderr', async () => {
     const h = harness();
     h.browser.close = async () => { throw new Error(`browser said ${SECRET} at https://s.test/?wpj_login=${TOKEN}`); };
     const written: string[] = [];
@@ -243,7 +243,7 @@ describe('lifecycle of the server (R85, R90)', () => {
     expect(stderr).not.toContain(TOKEN);
   });
 
-  it('still closes the browser when closing the session fails (M7)', async () => {
+  it('still closes the browser when closing the session fails', async () => {
     const h = harness();
     const server = createMcpServer(h.deps);
     await call(server, 'login_as', { actor: 'anonymous' });
@@ -408,7 +408,7 @@ describe('login_as (R84, R85, R87)', () => {
     expect((await call(server, 'navigate', { path: '/' })).text).toMatch(/call login_as first/);
   });
 
-  it('keeps the previous session\'s findings when opening the next one THROWS (C1)', async () => {
+  it('keeps the previous session\'s findings when opening the next one THROWS', async () => {
     const h = harness();
     const server = createMcpServer(h.deps);
     await call(server, 'login_as', { actor: 'anonymous' });
@@ -457,7 +457,7 @@ describe('login_as (R84, R85, R87)', () => {
     expect(text).toMatch(/previous session \(anonymous\)/);
   });
 
-  it('relaunches a browser that disconnected, instead of failing every later call (C1)', async () => {
+  it('relaunches a browser that disconnected, instead of failing every later call', async () => {
     const h = harness();
     const server = createMcpServer(h.deps);
     await call(server, 'login_as', { actor: 'anonymous' });
@@ -471,7 +471,7 @@ describe('login_as (R84, R85, R87)', () => {
     await server.shutdown();
   });
 
-  it('relaunches a cached browser that reports itself disconnected, even without the event (C1)', async () => {
+  it('relaunches a cached browser that reports itself disconnected, even without the event', async () => {
     const h = harness();
     const server = createMcpServer(h.deps);
     await call(server, 'login_as', { actor: 'anonymous' });
@@ -809,7 +809,7 @@ describe('run_journey (R88)', () => {
     expect(text).toMatch(/HTTP 502/);
   });
 
-  it('retires a held session FIRST, so its window never takes in the run, and reports its findings (M4)', async () => {
+  it('retires a held session FIRST, so its window never takes in the run, and reports its findings', async () => {
     const h = harness();
     const server = createMcpServer(h.deps);
     await call(server, 'login_as', { actor: 'anonymous' });
@@ -859,7 +859,7 @@ describe('run_journey (R88)', () => {
     expect(text).toMatch(/previous session \(anonymous\)[^\n]*1 finding/);
   });
 
-  it('reports the retired session\'s findings on a refusal too (M4)', async () => {
+  it('reports the retired session\'s findings on a refusal too', async () => {
     const h = harness();
     const server = createMcpServer(h.deps);
     await call(server, 'login_as', { actor: 'anonymous' });

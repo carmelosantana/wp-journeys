@@ -1,6 +1,6 @@
 /**
  * `serve()` on the REAL process.stdout, with a tool that writes to stdout every way author code
- * could (I1): console.log/info/debug, a console.log captured before serving started, and a direct
+ * could: console.log/info/debug, a console.log captured before serving started, and a direct
  * process.stdout.write. Spawned by tests/mcp-server.test.ts, which asserts stdout carries only
  * JSON-RPC frames.
  */

@@ -1,6 +1,6 @@
 # Dependency vet — 2026-09-09
 
-Run under `/powerup:supply-chain` before the first dependency was added, as the plan's
+Run as a supply-chain vetting pass before the first dependency was added, as the plan's
 blocking gate requires. The reference implementation's table (2026-08-06, npm-shaped) was
 **not** translated — this vet was done fresh against the live registry.
 
@@ -104,7 +104,7 @@ Any dependency added or bumped; any lockfile diff that cannot be explained from 
 `chromium` from `@playwright/test` when it loads. An npm-installed `wpj` would therefore fail
 with `ERR_MODULE_NOT_FOUND` before it could even print usage.
 
-**The gate (R93, run by the controller; reads only, nothing installed).**
+**The gate (R93, run by the maintainer; reads only, nothing installed).**
 
 | Check | Result |
 |---|---|
@@ -131,7 +131,7 @@ before it touches the site.
 
 1. **Runtime dependency placement.** `@playwright/test` would need to be in `dependencies`, or
    the CLI would need to stop importing it at load time. The gate above was for 1.63.0 on
-   2026-09-16 and approves nothing later: a future move needs a fresh `/powerup:supply-chain`
+   2026-09-16 and approves nothing later: a future move needs a fresh supply-chain vetting pass
    gate for whatever version is current then.
 2. **A build step.** Node refuses to strip types from `.ts` files under `node_modules`, and the
    package ships `bin/wpj.js` → `src/runner/cli.ts`. Reproduced on v22.23.2:

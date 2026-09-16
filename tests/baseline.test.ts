@@ -228,7 +228,7 @@ describe('captureBaseline', () => {
       'ensureActor("author")',
       'ensureActor("editor")',
       'ensureActor("administrator")',
-      // I8: each logged-in actor signs in ONCE, through the ordinary session, and lands on the
+      // Each logged-in actor signs in ONCE, through the ordinary session, and lands on the
       // dashboard, so the user meta a first login writes is in the baseline, not blamed on the plugin.
       ...warmUp('subscriber'), ...warmUp('contributor'), ...warmUp('author'),
       ...warmUp('editor'), ...warmUp('administrator'),

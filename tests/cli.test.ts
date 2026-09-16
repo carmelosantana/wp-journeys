@@ -137,7 +137,7 @@ describe('the wpj entry point', { timeout: SPAWN_TIMEOUT_MS }, () => {
     expect(stderr).toMatch(/wph mount.*activates/s);
   });
 
-  it('scrubs the secret from a fatal error on its way to stderr (M1)', () => {
+  it('scrubs the secret from a fatal error on its way to stderr', () => {
     // The loader quotes the refused hostname, and here the operator pasted the secret into it.
     const secret = 'fixture-secret-not-real-0123456789';
     const result = spawnSync(process.execPath, [wpj, 'run', '--plugin', 'acme'], {

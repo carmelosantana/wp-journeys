@@ -19,7 +19,7 @@ main().then(
   (error) => {
     // A failure before any journey ran: bad config, an unreachable agent, a baseline that could
     // not be captured. It is a failed run, not a clean one.
-    // Neither the secret nor a login token reaches stderr, even if a message quotes one (M1, R95e).
+    // Neither the secret nor a login token reaches stderr, even if a message quotes one (R95e).
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${outboundText(message, process.env[SECRET_VAR])}\n`);
     process.exit(1);

@@ -136,14 +136,14 @@ describe('openActorSession', () => {
     expect(!opened.ok && opened.findings).toMatchObject([
       { kind: 'assertion', text: expect.stringMatching(/sentinel could not be installed.*agent unreachable.*nothing was run/) },
     ]);
-    // Said the same way for a login_as session as for a journey (M8).
+    // Said the same way for a login_as session as for a journey.
     expect(JSON.stringify(!opened.ok && opened.findings)).not.toMatch(/journey/);
     // Nothing is authenticated for a page nobody is watching.
     expect(calls.filter((c) => c.startsWith('mintLogin'))).toEqual([]);
     expect(browser.closed).toEqual([true]);
   });
 
-  it('keeps a failed login\'s findings when closing its context ALSO fails, and says so (C1)', async () => {
+  it('keeps a failed login\'s findings when closing its context ALSO fails, and says so', async () => {
     const page = new FakePage();
     const browser = new FakeBrowser(page);
     browser.contextCloseError = new Error('context already gone');
@@ -160,7 +160,7 @@ describe('openActorSession', () => {
     ]);
   });
 
-  it('keeps the sentinel failure when closing its context also fails (C1)', async () => {
+  it('keeps the sentinel failure when closing its context also fails', async () => {
     const page = new FakePage();
     const browser = new FakeBrowser(page);
     browser.contextCloseError = new Error('context already gone');
@@ -217,7 +217,7 @@ describe('openActorSession', () => {
     expect(drained).toMatchObject([
       { kind: 'assertion', text: expect.stringMatching(/could not be drained.*these signals were NOT read/) },
     ]);
-    // Said the same way for a login_as session as for a journey (M8).
+    // Said the same way for a login_as session as for a journey.
     expect(JSON.stringify(drained)).not.toMatch(/journey/);
     await opened.session.close();
   });

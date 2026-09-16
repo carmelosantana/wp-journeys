@@ -110,7 +110,7 @@ async function provisionActors(agent: AgentClient): Promise<void> {
 const WARM_UP_SCREEN = '/wp-admin/';
 
 /**
- * Log every logged-in actor in ONCE, through the ordinary session, before the snapshot (I8).
+ * Log every logged-in actor in ONCE, through the ordinary session, before the snapshot.
  *
  * The snapshot reports user-meta KEY NAMES across all users. On a site where nobody has logged
  * in yet, the runner's own first logins — made AFTER the baseline — write core's per-user keys:
@@ -222,7 +222,7 @@ async function measureNoise(
  * @param plugin     the plugin under test's slug, asked about BEFORE the deactivate erases the answer
  * @param deactivate turn the plugin under test OFF (caller supplies; usually a wp-cli call)
  * @param activate   turn it back ON
- * @param browser    drives the warm-up logins (I8); launched before the site is touched
+ * @param browser    drives the warm-up logins; launched before the site is touched
  * @param fetchImpl  injectable so the probe is testable without a network
  */
 export async function captureBaseline(

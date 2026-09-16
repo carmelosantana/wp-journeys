@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Create the throwaway wp-harness site the integration tests run against.
-# Never touches alpacabot, alpaca10 or alpacapc.
+# It creates and touches only the site named wpjtest, never any other wp-harness site.
 #
 # The shared secret lives in ./.env (git-ignored). Re-running reuses it; it is generated only
 # when neither the environment nor ./.env supplies one. Later tasks load it with
 #   set -a; . ./.env; set +a
 set -euo pipefail
-WPH="node $WPH_CHECKOUT/bin/wph.js"
+# The wp-harness CLI. Set WPH when it is not on PATH, e.g. WPH="node /path/to/wp-harness/bin/wph.js".
+WPH="${WPH:-wph}"
 SITE=wpjtest
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$ROOT/.env"

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { MIN_SECRET_LENGTH, loadConfig } from '../src/config.ts';
 import { redactSecret } from '../src/errors.ts';
 
-describe('redactSecret (M1: one scrub, shared by every place text leaves the process)', () => {
+describe('redactSecret (one scrub, shared by every place text leaves the process)', () => {
   const secret = 'fixture-secret-not-real-0123456789';
 
   it('removes every occurrence of the secret', () => {
