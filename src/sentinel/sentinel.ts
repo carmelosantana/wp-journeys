@@ -250,9 +250,13 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
       if (finding) findings.push(finding);
     };
     pending.push(inspect().catch((error: unknown) => {
+      // Redacted like every other finding (R65): at the login step the failed request IS the
+      // minted-token URL, and a Playwright rejection commonly quotes the URL it was on, so
+      // both the url and the error would otherwise carry a live credential into the summary.
+      const safe = redactLoginToken(request.url());
       findings.push({
-        kind: 'requestfailed', url: request.url(),
-        text: `a failed request for ${request.url()} could not be classified (${String(error)}) — treat this signal as lost, not clean`,
+        kind: 'requestfailed', url: safe,
+        text: `a failed request for ${safe} could not be classified (${redactLoginToken(String(error))}) — treat this signal as lost, not clean`,
       });
     }));
   });

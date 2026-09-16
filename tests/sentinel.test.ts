@@ -278,6 +278,27 @@ describe('the live listeners', () => {
     ]);
     expect((await sentinel.drain())[0]?.text).toContain('could not be classified');
   });
+
+  it('redacts a minted token from the could-not-be-classified finding, in url AND text (R65)', async () => {
+    // At the login step the failed request IS `?wpj_login=<token>`, and a Playwright rejection
+    // commonly quotes the URL it was on. `classifyRequestFailed` redacts; this catch path wrote
+    // both the url and the error into the finding raw, so a `request.response()` rejection there
+    // put a live credential into the run summary and into any CI log that captures it.
+    const token = 'https://s.test/?wpj_login=SECRETTOKENabcdef0123456789abcd';
+    const { page, sentinel } = await setup();
+    page.emit('requestfailed', {
+      url: () => token,
+      failure: () => ({ errorText: 'net::ERR_FAILED' }),
+      response: async () => { throw new Error(`Target page closed at ${token}`); },
+    });
+
+    const findings = await sentinel.drain();
+
+    expect(findings).toHaveLength(1);
+    expect(JSON.stringify(findings)).not.toContain('SECRETTOKEN');
+    expect(findings[0]?.url).toBe('https://s.test/?wpj_login=<REDACTED>');
+    expect(findings[0]?.text).toContain('could not be classified');
+  });
 });
 
 describe('sentinel.drain', () => {
