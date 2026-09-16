@@ -12,6 +12,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { join } from 'node:path';
+
 import { chromium } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 
@@ -22,6 +24,8 @@ import type { Config } from '../config.ts';
 import { projectSurface } from '../discovery/surface.ts';
 import { messageOf } from '../errors.ts';
 import { outcomeOf } from '../journeys/index.ts';
+import { interpret } from '../manifest/interpret.ts';
+import { loadManifest } from '../manifest/load.ts';
 import type { Journey, JourneyResult } from '../journeys/index.ts';
 import { exitCodeFor, renderSummary } from '../report/summary.ts';
 import type { Finding } from '../sentinel/phplog.ts';
@@ -111,6 +115,49 @@ export function wpCommands(wp: string, plugin: string): WpCommands {
 }
 
 /**
+ * The plugin's own journeys, from the manifest in `WPJ_MANIFEST_DIR`.
+ *
+ * R70, first contact's first finding: "the plugin directory" is TWO paths on a real plugin. The
+ * directory wp-harness MOUNTS is the plugin root; the directory holding `wp-journeys.json` is
+ * wherever the plugin keeps its tests (Alpaca Bot: `tests/e2e`). This variable names the second,
+ * and only the second — it is where the manifest is read from, and the directory escape-hatch
+ * module paths resolve against and are confined under. It was `WPJ_PLUGIN_DIR`, a name that
+ * invited exactly the wrong path; the old name is refused rather than ignored, because ignoring
+ * it runs no authored journey and says nothing.
+ *
+ * Every refusal here is loud for the same reason the schema's are: an author who named a
+ * manifest believes it ran. So a named directory with no manifest in it is an error, not the
+ * zero-authoring case (that is what leaving the variable unset means), and a manifest written
+ * for another plugin is refused before its journeys can drive this one.
+ */
+export async function authoredJourneys(env: NodeJS.ProcessEnv, plugin: string): Promise<Journey[]> {
+  if (env.WPJ_PLUGIN_DIR !== undefined) {
+    throw new Error(
+      'WPJ_PLUGIN_DIR is no longer read — set WPJ_MANIFEST_DIR to the directory that holds '
+        + 'wp-journeys.json (which is not necessarily the plugin root you mounted).',
+    );
+  }
+  const dir = env.WPJ_MANIFEST_DIR;
+  if (!dir) return [];
+
+  const manifest = await loadManifest(dir);
+  if (manifest === null) {
+    throw new Error(
+      `WPJ_MANIFEST_DIR is set, but ${join(dir, 'wp-journeys.json')} does not exist — `
+        + 'name the directory the manifest is in, or unset the variable to run the core suite alone.',
+    );
+  }
+  if (manifest.plugin !== plugin) {
+    throw new Error(
+      `${join(dir, 'wp-journeys.json')} declares plugin "${manifest.plugin}", but the run is against "${plugin}".`,
+    );
+  }
+  // The directory is passed EXPLICITLY: interpret() resolves and confines module paths
+  // against it, and the runner's own cwd is not where any plugin keeps its journeys.
+  return interpret(manifest, dir);
+}
+
+/**
  * Run every journey, and hand back results the summary can always render.
  *
  * Three things happen inside ONE guard per journey, and the grouping is the point:
@@ -185,6 +232,9 @@ function usage(reason: string): void {
       '  WPJ_BASE_URL      the target site; local hostnames only\n' +
       '  WPJ_AGENT_SECRET  the shared secret the companion mu-plugin expects\n' +
       '  WPJ_WP            the wp-cli command used to toggle the plugin under test\n' +
+      '  WPJ_MANIFEST_DIR  optional: the directory holding the plugin\'s wp-journeys.json. Not\n' +
+      '                    necessarily the plugin root you mounted; escape-hatch module paths\n' +
+      '                    resolve against, and must stay inside, this directory\n' +
       '\nA completed run UNINSTALLS the plugin under test. The last journey deactivates it and\n' +
       'runs its uninstall routine, so its options, tables, cron events and user meta are really\n' +
       'deleted and it is left inactive; only the plugin FILES are kept. It also creates six\n' +
@@ -216,6 +266,10 @@ export async function main(
     return 2;
   }
 
+  // Before anything touches the site: a manifest that cannot run must not cost the operator a
+  // deactivate, a baseline and a whole suite first.
+  const authored = await authoredJourneys(env, plugin);
+
   const commands = wpCommands(wp, plugin);
   const shell = (command: string) => async (): Promise<void> => {
     await run('sh', ['-c', command]);
@@ -234,7 +288,7 @@ export async function main(
   const browser = await chromium.launch();
   let results: JourneyResult[];
   try {
-    const suite = coreSuite(plugin, delta, baseline, shell(commands.uninstall));
+    const suite = coreSuite(plugin, delta, baseline, shell(commands.uninstall), authored);
     results = await runSuite(suite, browser, cfg, agent, baseline);
   } finally {
     await browser.close();

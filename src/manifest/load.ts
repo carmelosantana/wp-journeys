@@ -18,18 +18,22 @@ function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
 }
 
-export async function loadManifest(pluginDir: string): Promise<Manifest | null> {
+/**
+ * @param manifestDir the directory holding `wp-journeys.json` — which on a real plugin is not
+ *   necessarily the plugin root that was mounted (R70; Alpaca Bot keeps it in `tests/e2e`).
+ */
+export async function loadManifest(manifestDir: string): Promise<Manifest | null> {
   // The DIRECTORY first: readFile answers ENOENT for a missing directory exactly as for a
-  // missing file, and a mistyped plugin path would otherwise read as "no manifest".
+  // missing file, and a mistyped path would otherwise read as "no manifest".
   let directory: Stats;
   try {
-    directory = await stat(pluginDir);
+    directory = await stat(manifestDir);
   } catch (error) {
-    throw new Error(`${pluginDir}: plugin directory does not exist — ${messageOf(error)}`);
+    throw new Error(`${manifestDir}: manifest directory does not exist — ${messageOf(error)}`);
   }
-  if (!directory.isDirectory()) throw new Error(`${pluginDir}: plugin directory is not a directory`);
+  if (!directory.isDirectory()) throw new Error(`${manifestDir}: manifest directory is not a directory`);
 
-  const file = join(pluginDir, MANIFEST_FILE);
+  const file = join(manifestDir, MANIFEST_FILE);
   let text: string;
   try {
     text = await readFile(file, 'utf8');

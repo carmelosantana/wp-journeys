@@ -1,12 +1,15 @@
 import { spawnSync } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { Actor } from '../src/actors/roles.ts';
 import { register } from '../src/journeys/index.ts';
 import type { Journey, JourneyResult } from '../src/journeys/index.ts';
-import { parseArgs, runSuite, wpCommands } from '../src/runner/cli.ts';
+import { authoredJourneys, parseArgs, runSuite, wpCommands } from '../src/runner/cli.ts';
 import type { Baseline } from '../src/suite/baseline.ts';
 
 /** A per-request deprecation this site writes whatever is under test (R45). */
@@ -306,5 +309,79 @@ describe('runSuite', () => {
     expect(() => renderSummary(results)).not.toThrow();
     expect(exitCodeFor(results)).toBe(1);
     expect(renderSummary(results)).toContain('2 failed');
+  });
+});
+
+describe('authoredJourneys (R70: the manifest directory is not the mount path)', () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function manifestDir(manifest?: unknown): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'wpj-cli-'));
+    dirs.push(dir);
+    if (manifest !== undefined) await writeFile(join(dir, 'wp-journeys.json'), JSON.stringify(manifest));
+    return dir;
+  }
+
+  const manifest = (plugin: string, journeys: unknown[]) => ({ version: 1, plugin, journeys });
+  const denial = {
+    name: 'acme-editor-is-denied', actor: 'editor', surface: 'admin',
+    screens: [{ url: '/wp-admin/admin.php?page=acme', allow: [], deny: ['editor'] }],
+  };
+
+  it('authors nothing when no manifest directory is named — the zero-authoring run', async () => {
+    expect(await authoredJourneys({}, 'acme')).toEqual([]);
+  });
+
+  it('interprets the manifest in WPJ_MANIFEST_DIR', async () => {
+    const dir = await manifestDir(manifest('acme', [denial]));
+
+    const journeys = await authoredJourneys({ WPJ_MANIFEST_DIR: dir }, 'acme');
+
+    expect(journeys.map((j) => `${j.name}:${j.actor}:${j.surface}`)).toEqual(['acme-editor-is-denied:editor:admin']);
+  });
+
+  it('resolves an escape-hatch module against the manifest directory, never the runner\'s cwd', async () => {
+    // The wiring trap: interpret(manifest) alone resolved AND confined module paths against
+    // process.cwd(), so a module next to the manifest was simply not found.
+    const dir = await manifestDir(manifest('acme', [
+      { name: 'acme-custom', actor: 'editor', surface: 'admin', module: 'custom.mjs' },
+    ]));
+    await writeFile(join(dir, 'custom.mjs'), [
+      'export default { name: "x", actor: "editor", surface: "admin",',
+      '  run: async () => ({ name: "x", actor: "editor", surface: "admin", entitiesCreated: 0,',
+      '    findings: [{ kind: "assertion", text: "the module beside the manifest ran" }] }) };',
+    ].join('\n'));
+
+    const [journey] = await authoredJourneys({ WPJ_MANIFEST_DIR: dir }, 'acme');
+    const result = await journey?.run(nothing, nothing, nothing);
+
+    expect(result?.findings).toEqual([{ kind: 'assertion', text: 'the module beside the manifest ran' }]);
+  });
+
+  it('refuses a named directory that holds no manifest — the operator meant one to run', async () => {
+    // Exactly first contact's first mistake: naming the plugin ROOT when the manifest lives in
+    // tests/e2e. loadManifest reads that as "this plugin has none", and the run goes green
+    // with not one authored journey in it.
+    const dir = await manifestDir();
+
+    await expect(authoredJourneys({ WPJ_MANIFEST_DIR: dir }, 'acme'))
+      .rejects.toThrow(`WPJ_MANIFEST_DIR is set, but ${join(dir, 'wp-journeys.json')} does not exist`);
+  });
+
+  it('refuses a manifest written for a different plugin', async () => {
+    const dir = await manifestDir(manifest('other-plugin', [denial]));
+
+    await expect(authoredJourneys({ WPJ_MANIFEST_DIR: dir }, 'acme'))
+      .rejects.toThrow(/declares plugin "other-plugin", but the run is against "acme"/);
+  });
+
+  it('refuses the old variable name rather than silently running without the manifest', async () => {
+    const dir = await manifestDir(manifest('acme', [denial]));
+
+    await expect(authoredJourneys({ WPJ_PLUGIN_DIR: dir }, 'acme'))
+      .rejects.toThrow(/WPJ_PLUGIN_DIR is no longer read.*WPJ_MANIFEST_DIR/);
   });
 });

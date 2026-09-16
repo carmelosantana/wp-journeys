@@ -32,16 +32,23 @@ export function conformanceSurface(before: Surface, after: Surface): Surface {
   return { ...surfaceDelta(before, after), caps: after.caps };
 }
 
+/**
+ * @param authored the plugin's own journeys, from its manifest. They run after the discovered
+ *   surface and BEFORE the lifecycle journey, which uninstalls the plugin every other journey
+ *   needs. A name that collides with a core journey is refused by `register`, never dropped.
+ */
 export function coreSuite(
   plugin: string,
   delta: Surface,
   baseline: Baseline,
   uninstall: () => Promise<void>,
+  authored: readonly Journey[] = [],
 ): Record<string, Journey> {
   return register(
     frontendRenders,
     ...ALL_ACTORS.map((actor) => adminSweep(plugin, delta, actor)),
     shortcodeRender(plugin, delta),
+    ...authored,
     // Uninstall runs last: it removes the plugin the other journeys need.
     lifecycle(plugin, baseline, uninstall),
   );

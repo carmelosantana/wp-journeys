@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { ALL_ACTORS, Actor } from '../src/actors/roles.ts';
 import { surfaceDelta } from '../src/discovery/surface.ts';
 import { outcomeOf } from '../src/journeys/index.ts';
+import type { Journey } from '../src/journeys/index.ts';
+import { CONTROL_SCREEN } from '../src/journeys/support.ts';
 import { accessMatrix } from '../src/suite/admin-access-matrix.ts';
 import { conformanceSurface, coreSuite } from '../src/suite/index.ts';
 import { adminSweep, shortcodeRender, sweepPlan } from '../src/suite/rendered-surface.ts';
@@ -93,7 +95,7 @@ describe('conformanceSurface', () => {
 });
 
 describe('sweepPlan', () => {
-  const CONTROL = '/wp-admin/profile.php';
+  const CONTROL = CONTROL_SCREEN;
   const screensOf = (plan: ReadonlyArray<{ url: string }>) => plan.filter((s) => s.url !== CONTROL);
 
   it('opens an authenticated sweep with a control visit no anonymous session could pass (R54)', () => {
@@ -157,6 +159,29 @@ describe('coreSuite', () => {
       'lifecycle:acme',
       'shortcode-render:acme',
     ]);
+  });
+
+  /** A manifest journey as the CLI hands it over; never run here. */
+  const authored = (name: string): Journey => ({
+    name, actor: Actor.EDITOR, surface: 'admin', run: () => Promise.reject(new Error('not run in this test')),
+  });
+
+  it('runs a plugin\'s authored journeys, and runs them BEFORE the uninstall', () => {
+    // The lifecycle journey uninstalls the plugin under test. An authored journey queued after
+    // it would drive a site the plugin is no longer on, and fail for a reason that is the
+    // runner's, not the plugin's.
+    const suite = coreSuite('acme', delta, baseline, async () => {}, [authored('acme-a'), authored('acme-b')]);
+    const order = Object.keys(suite);
+
+    expect(order).toContain('acme-a');
+    expect(order).toContain('acme-b');
+    expect(order.at(-1)).toBe('lifecycle:acme');
+    expect(order.indexOf('acme-a')).toBeLessThan(order.indexOf('acme-b'));
+  });
+
+  it('refuses an authored journey whose name collides with a core one, rather than dropping either', () => {
+    expect(() => coreSuite('acme', delta, baseline, async () => {}, [authored('frontend-renders')]))
+      .toThrow(/duplicate journey name "frontend-renders"/);
   });
 
   it('binds every journey to the actor its name claims', () => {

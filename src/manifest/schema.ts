@@ -39,7 +39,10 @@ export interface ManifestJourney {
   screens?: ManifestScreen[];
   settings?: ManifestSetting[];
   shortcodes?: string[];
-  /** Path, relative to the plugin root, of a TypeScript module default-exporting a Journey. */
+  /**
+   * Path of a TypeScript module default-exporting a Journey, relative to the directory the
+   * manifest is in (which need not be the plugin root), and confined inside it.
+   */
   module?: string;
 }
 

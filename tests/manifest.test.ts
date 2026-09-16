@@ -226,7 +226,7 @@ describe('parseManifest', () => {
 
 describe('interpret', () => {
   it('produces one Journey per manifest entry, preserving name, actor and surface', () => {
-    const journeys = interpret(parseManifest(valid, 'f.json'));
+    const journeys = interpret(parseManifest(valid, 'f.json'), '/nowhere');
     expect(journeys.map((j) => j.name)).toEqual(['acme-settings-round-trip', 'acme-custom']);
     expect(journeys[0]?.actor).toBe('administrator');
     expect(journeys[0]?.surface).toBe('both');
@@ -234,7 +234,7 @@ describe('interpret', () => {
   });
 
   it('produces runnable journeys', () => {
-    for (const journey of interpret(parseManifest(valid, 'f.json'))) {
+    for (const journey of interpret(parseManifest(valid, 'f.json'), '/nowhere')) {
       expect(typeof journey.run).toBe('function');
     }
   });
@@ -246,11 +246,11 @@ describe('interpret', () => {
   });
 
   /** A single-journey manifest, parsed and interpreted, with the fakes to run it against. */
-  function arrange(journey: Record<string, unknown>, pluginDir?: string, nonce?: () => string) {
+  function arrange(journey: Record<string, unknown>, manifestDir = '/nowhere', nonce?: () => string) {
     const page = new FakePage();
     const browser = new FakeBrowser(page);
     const { agent, calls } = fakeAgent();
-    const [run] = interpret(parseManifest(withJourney(journey), 'f.json'), pluginDir, nonce);
+    const [run] = interpret(parseManifest(withJourney(journey), 'f.json'), manifestDir, nonce);
     if (!run) throw new Error('interpret produced no journey');
     return { page, browser, agent, calls, run: () => run.run(browser.asBrowser(), CFG, agent) };
   }
@@ -589,7 +589,7 @@ describe('interpret', () => {
       // but only the author's own: not ../ into a sibling checkout, not an absolute path.
       for (const module of ['../outside.ts', '/etc/hostname', 'tests/../../outside.ts']) {
         const { run } = arrange({ name: 'esc', actor: 'editor', surface: 'admin', module }, repo);
-        await expect(run()).rejects.toThrow(/journey "esc": module ".*" resolves outside the plugin directory/);
+        await expect(run()).rejects.toThrow(/journey "esc": module ".*" resolves outside the manifest directory/);
       }
     });
 
@@ -653,12 +653,12 @@ describe('loadManifest', () => {
     await expect(loadManifest(dir)).rejects.toThrow(`${join(dir, 'wp-journeys.json')}: "version" must be 1`);
   });
 
-  it('throws when the plugin directory itself does not exist — that is not "no manifest"', async () => {
+  it('throws when the manifest directory itself does not exist — that is not "no manifest"', async () => {
     // readFile answers ENOENT for a missing directory exactly as for a missing file, and a
     // mistyped plugin path would otherwise run the core suite against nothing, silently.
     const dir = join(await pluginDir(), 'missing');
 
-    await expect(loadManifest(dir)).rejects.toThrow(`${dir}: plugin directory does not exist`);
+    await expect(loadManifest(dir)).rejects.toThrow(`${dir}: manifest directory does not exist`);
   });
 
   it('throws when the manifest exists but cannot be read — only ENOENT is "absent"', async () => {
@@ -676,7 +676,7 @@ describe('assets/wp-journeys.example.json', () => {
     const file = fileURLToPath(new URL('../assets/wp-journeys.example.json', import.meta.url));
     const manifest = parseManifest(JSON.parse(await readFile(file, 'utf8')), file);
 
-    expect(interpret(manifest).map((j) => `${j.name}:${j.actor}:${j.surface}`)).toEqual([
+    expect(interpret(manifest, '/nowhere').map((j) => `${j.name}:${j.actor}:${j.surface}`)).toEqual([
       'acme-settings-round-trip:administrator:both',
       'acme-editor-is-denied:editor:admin',
     ]);

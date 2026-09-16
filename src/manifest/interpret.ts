@@ -38,19 +38,19 @@ import type { Manifest, ManifestJourney } from './schema.ts';
 
 /**
  * Load the escape-hatch module and return its Journey, or throw naming the journey and the
- * module. Resolved against the PLUGIN directory (R8): a relative path passed straight to
- * `import()` would resolve against this file's own URL, not the plugin's.
+ * module. Resolved against the MANIFEST's directory (R8, R70): a relative path passed straight
+ * to `import()` would resolve against this file's own URL, not the plugin's.
  *
  * And confined to it. The hatch runs author code by design, but a manifest is data from the
  * plugin under test, and `resolve` would happily follow `../` into a sibling checkout or take
  * an absolute path to any file on the machine.
  */
-async function loadModule(entry: ManifestJourney, module: string, pluginDir: string): Promise<Journey> {
-  const root = resolve(pluginDir);
+async function loadModule(entry: ManifestJourney, module: string, manifestDir: string): Promise<Journey> {
+  const root = resolve(manifestDir);
   const target = resolve(root, module);
   const inside = relative(root, target);
   if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
-    throw new Error(`journey "${entry.name}": module "${module}" resolves outside the plugin directory ${root}`);
+    throw new Error(`journey "${entry.name}": module "${module}" resolves outside the manifest directory ${root}`);
   }
 
   let loaded: { default?: unknown };
@@ -146,14 +146,14 @@ function readsBack(text: string, written: string): boolean {
   return comparable(text).includes(comparable(written));
 }
 
-function journeyFor(entry: ManifestJourney, pluginDir: string, nonce: () => string): Journey {
+function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => string): Journey {
   return {
     name: entry.name,
     actor: entry.actor,
     surface: entry.surface,
     run: async (browser, cfg, agent) => {
       if (entry.module !== undefined) {
-        const loaded = await loadModule(entry, entry.module, pluginDir);
+        const loaded = await loadModule(entry, entry.module, manifestDir);
         let raw: unknown;
         try {
           raw = await loaded.run(browser, cfg, agent);
@@ -230,10 +230,12 @@ function journeyFor(entry: ManifestJourney, pluginDir: string, nonce: () => stri
 }
 
 /**
- * `nonce` is drawn inside `run`, once per settings write, so `interpret` itself stays pure and
- * deterministic; it is a parameter only so a test can pin the suffix and assert the exact
- * value written.
+ * @param manifestDir the directory `wp-journeys.json` was read from. REQUIRED, with no default:
+ *   it once defaulted to `'.'`, which silently resolved and confined every module path against
+ *   the runner's own working directory — a module beside the manifest was simply not found.
+ * @param nonce drawn inside `run`, once per settings write, so `interpret` itself stays pure and
+ *   deterministic; a parameter only so a test can pin the suffix and assert the exact value.
  */
-export function interpret(manifest: Manifest, pluginDir = '.', nonce: () => string = freshNonce): Journey[] {
-  return manifest.journeys.map((entry) => journeyFor(entry, pluginDir, nonce));
+export function interpret(manifest: Manifest, manifestDir: string, nonce: () => string = freshNonce): Journey[] {
+  return manifest.journeys.map((entry) => journeyFor(entry, manifestDir, nonce));
 }
