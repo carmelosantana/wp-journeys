@@ -117,6 +117,13 @@ export class FakeBrowser {
     return context as unknown as BrowserContext;
   }
 
+  /** How many times the BROWSER itself was closed (contexts are tracked in `closed`). */
+  browserClosed = 0;
+
+  async close(): Promise<void> {
+    this.browserClosed += 1;
+  }
+
   asBrowser(): Browser {
     return this as unknown as Browser;
   }

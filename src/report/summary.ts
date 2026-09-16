@@ -21,7 +21,7 @@ import { outcomeOf } from '../journeys/index.ts';
 import type { JourneyResult, Outcome, SurfaceAxis } from '../journeys/index.ts';
 import type { Finding } from '../sentinel/phplog.ts';
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
@@ -30,7 +30,7 @@ function plural(n: number, word: string): string {
  * is prefixed so a reader can tell an observation (`phplog`, `response`) from the journey's own
  * verdict (`assertion`) at a glance.
  */
-function renderFinding(finding: Finding): string {
+export function renderFinding(finding: Finding): string {
   return `      - [${finding.kind}] ${finding.text}`;
 }
 
