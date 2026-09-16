@@ -15,7 +15,7 @@ import type { RawRegistries } from '../src/discovery/types.ts';
 import { PROTOCOL_VERSION, createMcpServer, serve, type McpDeps, type Rpc } from '../src/mcp/server.ts';
 import { TOOLS, describeTools } from '../src/mcp/tools.ts';
 import { SPAWN_TIMEOUT_MS } from './helpers/timeouts.ts';
-import { CLEAN, FakeBrowser, FakePage, fakeAgent, isSignedRenderPath, landsOn, response } from './helpers/fakes.ts';
+import { CLEAN, FakeBrowser, FakePage, LoggedInPage, fakeAgent, isSignedRenderPath, landsOn, response } from './helpers/fakes.ts';
 
 /** A test value standing in for the shared secret. Nothing real. */
 const SECRET = 'fixture-secret-not-real-0123456789';
@@ -52,11 +52,19 @@ function harness(
   });
   let launched = 0;
   const shell: string[] = [];
+  // Between the baseline's deactivate and its activate, every new context is a warm-up login:
+  // it gets a page of its own, so the page a test arranged is left for the journey.
+  let inBaseline = false;
+  browser.pageFor = () => (inBaseline ? new LoggedInPage() : null);
   const deps: McpDeps = {
     env: over.env ?? ENV,
     createAgent: () => agent,
     launchBrowser: async () => { launched += 1; return browser.asBrowser() as Browser; },
-    runShell: async (command) => { shell.push(command); },
+    runShell: async (command) => {
+      shell.push(command);
+      if (command.includes(' deactivate ')) inBaseline = true;
+      if (command.includes(' activate ') && !command.includes(' deactivate ')) inBaseline = false;
+    },
     fetchImpl: over.fetchImpl ?? ((async () => new Response('<html><body>home</body></html>')) as typeof fetch),
   };
   return { deps, page, browser, calls, launches: () => launched, shell };
@@ -810,7 +818,8 @@ describe('run_journey (R88)', () => {
     // Whether the held context was already closed when each wp-cli command ran: it must be
     // retired before the baseline's deactivate, not after the run.
     const heldClosedAtShell: boolean[] = [];
-    h.deps.runShell = async (command) => { heldClosedAtShell.push(h.browser.closed[0] === true); h.shell.push(command); };
+    const recordShell = h.deps.runShell!;
+    h.deps.runShell = async (command) => { heldClosedAtShell.push(h.browser.closed[0] === true); await recordShell(command); };
 
     const { text, isError } = await call(server, 'run_journey', { name: 'frontend-renders', plugin: 'acme' });
 

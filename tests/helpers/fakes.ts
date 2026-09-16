@@ -116,12 +116,33 @@ export class FakePage {
   }
 }
 
+/**
+ * A page on which every minted login succeeds and lands in wp-admin — what the baseline's warm-up
+ * logins see on a healthy site. It has its own navigation queue, so it never consumes the one a
+ * test arranged for the journey under test.
+ */
+export class LoggedInPage extends FakePage {
+  override async goto(url: string): Promise<unknown> {
+    if (/[?&]wpj_login=/.test(url)) this.navigations.unshift(landsOn('https://s.test/wp-admin/'));
+    return super.goto(url);
+  }
+}
+
 /** A browser whose contexts hand out ONE page, so a test can drive it before the run starts. */
 export class FakeBrowser {
   readonly options: unknown[] = [];
   readonly closed: boolean[] = [];
+  /**
+   * When set and it returns a page, a new context hands out THAT page instead of `page` — how a
+   * test keeps the baseline's warm-up logins off the page it arranged for the journey.
+   */
+  pageFor: (() => FakePage | null) | null = null;
 
-  constructor(readonly page: FakePage) {}
+  readonly page: FakePage;
+
+  constructor(page: FakePage) {
+    this.page = page;
+  }
 
   /** When set, the next `newContext()` rejects with it (and clears it) — a crashed browser. */
   newContextError: Error | null = null;
@@ -140,6 +161,7 @@ export class FakeBrowser {
     }
     this.options.push(options);
     const at = this.closed.push(false) - 1;
+    const handed = this.pageFor?.() ?? this.page;
     const context = {
       newPage: async (): Promise<Page> => {
         if (this.newPageError) {
@@ -147,7 +169,7 @@ export class FakeBrowser {
           this.newPageError = null;
           throw error;
         }
-        return this.page.asPage();
+        return handed.asPage();
       },
       close: async (): Promise<void> => {
         this.closed[at] = true;

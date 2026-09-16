@@ -7,6 +7,7 @@ import type { RawRegistries } from '../src/discovery/types.ts';
 import { scanBody } from '../src/sentinel/classify.ts';
 import type { Finding } from '../src/sentinel/phplog.ts';
 import { captureBaseline, withoutBaselineNoise } from '../src/suite/baseline.ts';
+import { FakeBrowser, FakePage, landsOn } from './helpers/fakes.ts';
 
 const CFG: Config = { baseUrl: 'https://s.test/', secret: 'x'.repeat(16) };
 
@@ -18,6 +19,9 @@ const RAW: RawRegistries = {
 const SNAPSHOT: Snapshot = {
   options: ['siteurl'], tables: ['wp_posts'], cron: ['wp_version_check'], userMeta: ['wpj_actor'],
 };
+
+/** The runner's own users, as ensureActor answers for them. */
+const ACTOR_IDS: Record<string, number> = { subscriber: 8, contributor: 15, author: 10, editor: 7, administrator: 11 };
 
 const STATUS: AgentStatus = { ok: true, wp: '7.1', php: '8.4.25', debugLog: true };
 
@@ -70,7 +74,8 @@ function harness(options: { windows?: string[][]; bodies?: string[]; agent?: Par
   const bodies = [...(options.bodies ?? [])];
 
   const base: Partial<AgentClient> = {
-    ensureActor: async () => ({ userId: 7 }),
+    ensureActor: async (role: string) => ({ userId: ACTOR_IDS[role] ?? 0 }),
+    mintLogin: async (userId: number) => ({ url: `https://s.test/?wpj_login=T${userId}` }),
     discover: async () => RAW,
     snapshot: async () => SNAPSHOT,
     status: async () => STATUS,
@@ -98,10 +103,22 @@ function harness(options: { windows?: string[][]; bodies?: string[]; agent?: Par
     return new Response(bodies.shift() ?? CLEAN_BODY);
   }) as unknown as typeof fetch;
 
+  /** The browser the warm-up logins drive: every mint lands in wp-admin, as a real one does. */
+  class WarmPage extends FakePage {
+    override async goto(url: string): Promise<unknown> {
+      sequence.push(`visit ${url}`);
+      if (url.includes('wpj_login=')) this.navigations.unshift(landsOn('https://s.test/wp-admin/'));
+      return super.goto(url);
+    }
+  }
+  const browser = new FakeBrowser(new WarmPage());
+
   return {
     agent,
     sequence,
     fetchImpl,
+    browser: browser.asBrowser(),
+    fakeBrowser: browser,
     deactivate: async () => { sequence.push('deactivate'); },
     activate: async () => { sequence.push('activate'); },
   };
@@ -109,14 +126,14 @@ function harness(options: { windows?: string[][]; bodies?: string[]; agent?: Par
 
 describe('captureBaseline, front-end probe transport', () => {
   it('never follows a redirect and bounds the request with a timeout', async () => {
-    const { agent, deactivate, activate } = harness();
+    const { agent, deactivate, activate, browser } = harness();
     const inits: Array<RequestInit | undefined> = [];
     const fetchImpl = (async (_url: string, init?: RequestInit) => {
       inits.push(init);
       return new Response(CLEAN_BODY);
     }) as unknown as typeof fetch;
 
-    await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(inits).toHaveLength(2);
     for (const init of inits) {
@@ -126,29 +143,80 @@ describe('captureBaseline, front-end probe transport', () => {
   });
 
   it('fails loudly on a redirected probe, rather than measuring a body that is not the render', async () => {
-    const { agent, sequence, deactivate, activate } = harness();
+    const { agent, sequence, deactivate, activate, browser } = harness();
     const fetchImpl = (async () => new Response(null, { status: 301, headers: { location: 'https://other.example/x' } })) as unknown as typeof fetch;
 
-    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl))
       .rejects.toThrow(/front-end probe of https:\/\/s\.test\/ redirected \(HTTP 301\) to https:\/\/other\.example.*WPJ_BASE_URL is probably wrong/);
     // Still reactivated.
     expect(sequence.at(-1)).toBe('activate');
   });
 
   it('names a probe that timed out', async () => {
-    const { agent, deactivate, activate } = harness();
+    const { agent, deactivate, activate, browser } = harness();
     const fetchImpl = (async () => { throw new DOMException('timed out', 'TimeoutError'); }) as unknown as typeof fetch;
 
-    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl))
       .rejects.toThrow(/front-end probe of https:\/\/s\.test\/ did not answer within 30 s/);
+  });
+});
+
+/** What one warm-up login looks like in the recorded sequence. */
+function warmUp(role: string): string[] {
+  const id = ACTOR_IDS[role]!;
+  return [
+    'logDelta("end")', `ensureActor("${role}")`, `mintLogin(${id})`,
+    `visit https://s.test/?wpj_login=T${id}`, 'visit /wp-admin/',
+  ];
+}
+
+describe('captureBaseline, warm-up logins (a fresh site\'s first logins are not the plugin\'s orphans)', () => {
+  it('provisions, then logs every logged-in actor in, THEN snapshots — in that order', async () => {
+    const { agent, sequence, fetchImpl, deactivate, activate, browser, fakeBrowser } = harness();
+
+    await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
+
+    const lastProvision = sequence.indexOf('ensureActor("administrator")');
+    const firstMint = sequence.findIndex((step) => step.startsWith('mintLogin'));
+    const lastLanding = sequence.lastIndexOf('visit /wp-admin/');
+    const snapshot = sequence.indexOf('snapshot()');
+    expect(lastProvision).toBeGreaterThan(-1);
+    expect(firstMint).toBeGreaterThan(lastProvision);
+    expect(lastLanding).toBeLessThan(snapshot);
+    expect(sequence.filter((step) => step.startsWith('mintLogin'))).toHaveLength(5);
+    expect(sequence.filter((step) => step === 'visit /wp-admin/')).toHaveLength(5);
+    // Every warm-up context is closed again.
+    expect(fakeBrowser.closed).toEqual([true, true, true, true, true]);
+  });
+
+  it('never logs the anonymous actor in', async () => {
+    const { agent, sequence, fetchImpl, deactivate, activate, browser } = harness();
+
+    await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
+
+    expect(sequence).not.toContain('ensureActor("anonymous")');
+    expect(sequence.filter((step) => step.startsWith('mintLogin'))).not.toContain('mintLogin(0)');
+  });
+
+  it('fails the baseline loudly, and still reactivates, when a warm-up login fails', async () => {
+    const { agent, sequence, fetchImpl, deactivate, activate } = harness();
+    const page = new FakePage();
+    // The mint bounces to wp-login.php: no session was established.
+    page.navigations = [landsOn('https://s.test/wp-login.php?redirect_to=x')];
+    const refusing = new FakeBrowser(page).asBrowser();
+
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, refusing, fetchImpl))
+      .rejects.toThrow(/warm-up login as subscriber failed.*not authenticated/);
+    expect(sequence).not.toContain('snapshot()');
+    expect(sequence.at(-1)).toBe('activate');
   });
 });
 
 describe('captureBaseline', () => {
   it('reads the site with the plugin under test deactivated, and turns it back on after', async () => {
-    const { agent, sequence, fetchImpl, deactivate, activate } = harness();
+    const { agent, sequence, fetchImpl, deactivate, activate, browser } = harness();
 
-    await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(sequence).toEqual([
       // R75: whether the plugin was ACTIVE is read before the deactivate, which erases it.
@@ -160,6 +228,10 @@ describe('captureBaseline', () => {
       'ensureActor("author")',
       'ensureActor("editor")',
       'ensureActor("administrator")',
+      // I8: each logged-in actor signs in ONCE, through the ordinary session, and lands on the
+      // dashboard, so the user meta a first login writes is in the baseline, not blamed on the plugin.
+      ...warmUp('subscriber'), ...warmUp('contributor'), ...warmUp('author'),
+      ...warmUp('editor'), ...warmUp('administrator'),
       'discover()',
       'snapshot()',
       // Two REST samples (the shape the sentinel's own round trip makes), then two front-end
@@ -176,25 +248,25 @@ describe('captureBaseline', () => {
 
   describe('whether the plugin was active when the baseline was taken (R75)', () => {
     it('records an active plugin: whatever its activation created predates the baseline', async () => {
-      const { agent, fetchImpl, deactivate, activate } = harness({
+      const { agent, fetchImpl, deactivate, activate, browser } = harness({
         agent: { status: async (plugin?: string) => ({ ...STATUS, ...(plugin ? { pluginActive: true } : {}) }) },
       });
 
-      expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl)).activeAtStart).toBe(true);
+      expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl)).activeAtStart).toBe(true);
     });
 
     it('records an inactive plugin', async () => {
-      const { agent, fetchImpl, deactivate, activate } = harness({
+      const { agent, fetchImpl, deactivate, activate, browser } = harness({
         agent: { status: async (plugin?: string) => ({ ...STATUS, ...(plugin ? { pluginActive: false } : {}) }) },
       });
 
-      expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl)).activeAtStart).toBe(false);
+      expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl)).activeAtStart).toBe(false);
     });
 
     it('treats an agent that cannot say as ACTIVE — unknown must never earn a pass', async () => {
-      const { agent, fetchImpl, deactivate, activate } = harness();
+      const { agent, fetchImpl, deactivate, activate, browser } = harness();
 
-      expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl)).activeAtStart).toBe(true);
+      expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl)).activeAtStart).toBe(true);
     });
   });
 
@@ -203,11 +275,15 @@ describe('captureBaseline', () => {
     // a baseline taken before the actors exist sees `wpj_actor` appear afterwards and reports it
     // as an orphan of the plugin under test — a false red on every plugin, forever (R36).
     // Asking for an anonymous user is refused by the agent: anonymous has no user at all.
-    const { agent, sequence, fetchImpl, deactivate, activate } = harness();
+    const { agent, sequence, fetchImpl, deactivate, activate, browser } = harness();
 
-    await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
-    expect(sequence.filter((step) => step.startsWith('ensureActor'))).toEqual([
+    // The provisioning pass is the first five asks, all before any warm-up login mints; the
+    // warm-up then asks for each actor again.
+    const provisioning = sequence.filter((step) => step.startsWith('ensureActor')).slice(0, 5);
+    expect(sequence.indexOf('ensureActor("administrator")')).toBeLessThan(sequence.findIndex((step) => step.startsWith('mintLogin')));
+    expect(provisioning).toEqual([
       'ensureActor("subscriber")', 'ensureActor("contributor")', 'ensureActor("author")',
       'ensureActor("editor")', 'ensureActor("administrator")',
     ]);
@@ -215,9 +291,9 @@ describe('captureBaseline', () => {
   });
 
   it('projects the raw registries, so the baseline is a Surface and not a dump', async () => {
-    const { agent, fetchImpl, deactivate, activate } = harness();
+    const { agent, fetchImpl, deactivate, activate, browser } = harness();
 
-    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(baseline.surface.screens).toEqual([
       { slug: 'options-general.php', url: '/wp-admin/options-general.php', capability: 'manage_options', title: 'Settings', parent: null },
@@ -229,7 +305,7 @@ describe('captureBaseline', () => {
     // R45: the sentinel's own logDelta round trip is itself a WordPress request, so a
     // per-request notice lands in EVERY window. Only a baseline captured with the plugin under
     // test deactivated can tell that apart from a notice a visit provoked.
-    const { agent, fetchImpl, deactivate, activate } = harness({
+    const { agent, fetchImpl, deactivate, activate, browser } = harness({
       windows: [
         // Core chatter the classifier already ignores rides along in the first window.
         [NOISE_LINE, '[15-Sep-2026 22:40:00 UTC] Automatic updates starting...'],
@@ -237,7 +313,7 @@ describe('captureBaseline', () => {
       ],
     });
 
-    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(baseline.logNoise).toEqual([NOISE_TEXT]);
   });
@@ -247,11 +323,11 @@ describe('captureBaseline', () => {
     // call's own tail, drops in a line that is not per-request noise at all. Subtracting it
     // would strip a genuine defect carrying that text from every journey for the whole run —
     // the one over-subtraction route to a FALSE GREEN.
-    const { agent, fetchImpl, deactivate, activate } = harness({
+    const { agent, fetchImpl, deactivate, activate, browser } = harness({
       windows: [[NOISE_LINE, ONE_OFF_LINE], [NOISE_LINE], [], []],
     });
 
-    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(baseline.logNoise).toEqual([NOISE_TEXT]);
     expect(baseline.logNoise).not.toContain(ONE_OFF_TEXT);
@@ -262,11 +338,11 @@ describe('captureBaseline', () => {
     // common case on a real site, and the very shape this project's own canary uses — is
     // invisible to a REST-only probe and would be reported once per journey as a defect of the
     // plugin under test.
-    const { agent, sequence, fetchImpl, deactivate, activate } = harness({
+    const { agent, sequence, fetchImpl, deactivate, activate, browser } = harness({
       windows: [[], [], [RENDER_LINE], [RENDER_LINE]],
     });
 
-    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(baseline.logNoise).toEqual([RENDER_TEXT]);
     expect(sequence.filter((step) => step.startsWith('GET '))).toEqual([
@@ -275,11 +351,11 @@ describe('captureBaseline', () => {
   });
 
   it('does not subtract a render diagnostic that only one of the two renders produced', async () => {
-    const { agent, fetchImpl, deactivate, activate } = harness({
+    const { agent, fetchImpl, deactivate, activate, browser } = harness({
       windows: [[], [], [RENDER_LINE], []],
     });
 
-    expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl)).logNoise).toEqual([]);
+    expect((await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl)).logNoise).toEqual([]);
   });
 
   it('records a diagnostic PRINTED into the body as per-request noise too (R60)', async () => {
@@ -287,11 +363,11 @@ describe('captureBaseline', () => {
     // site with WP_DEBUG_DISPLAY on prints its per-request warning into every render, and the
     // bodyscan signal reports it once per journey as a defect of whatever is under test — a
     // false red that log noise alone cannot reach, because nothing need be written to the log.
-    const { agent, fetchImpl, deactivate, activate } = harness({
+    const { agent, fetchImpl, deactivate, activate, browser } = harness({
       bodies: [BODY_WARNING, BODY_WARNING],
     });
 
-    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(baseline.bodyNoise).toHaveLength(1);
   });
@@ -300,11 +376,11 @@ describe('captureBaseline', () => {
     // R48 again, for the same reason: the subtraction removes EVERY occurrence for the whole
     // run, so a diagnostic that appeared in only one of the two renders must not enter the set
     // — that is the over-subtraction route to a false green.
-    const { agent, fetchImpl, deactivate, activate } = harness({
+    const { agent, fetchImpl, deactivate, activate, browser } = harness({
       bodies: [BODY_WARNING, CLEAN_BODY],
     });
 
-    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(baseline.bodyNoise).toEqual([]);
   });
@@ -318,9 +394,9 @@ describe('captureBaseline', () => {
       + 'Warning: Undefined variable $notset in /wp-content/themes/acme/header.php on line 8\n'
       + 'Warning: Undefined array key "id" in /wp-content/plugins/acme/admin.php on line 12\n'
       + '</body></html>';
-    const { agent, fetchImpl, deactivate, activate } = harness({ bodies: [both, both] });
+    const { agent, fetchImpl, deactivate, activate, browser } = harness({ bodies: [both, both] });
 
-    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(baseline.bodyNoise).toHaveLength(2);
   });
@@ -328,14 +404,14 @@ describe('captureBaseline', () => {
   it('measures body noise even when the log signal is unavailable', async () => {
     // The two signals are independent evidence. Coupling them would mean a site with
     // WP_DEBUG_LOG off gets no body subtraction either, for no reason.
-    const { agent, fetchImpl, deactivate, activate } = harness({
+    const { agent, fetchImpl, deactivate, activate, browser } = harness({
       bodies: [BODY_WARNING, BODY_WARNING],
       agent: {
         logDelta: async () => ({ offset: 0, lines: [], available: false, reason: 'WP_DEBUG_LOG is off' }),
       },
     });
 
-    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(baseline.logNoise).toEqual([]);
     expect(baseline.bodyNoise).toHaveLength(1);
@@ -343,13 +419,13 @@ describe('captureBaseline', () => {
 
   it('records no noise, rather than guessing, when the log signal is unavailable', async () => {
     // Under-subtracting costs a false red, which is loud. Guessing would cost a false green.
-    const { agent, fetchImpl, deactivate, activate } = harness({
+    const { agent, fetchImpl, deactivate, activate, browser } = harness({
       agent: {
         logDelta: async () => ({ offset: 0, lines: [], available: false, reason: 'WP_DEBUG_LOG is off' }),
       },
     });
 
-    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    const baseline = await captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
 
     expect(baseline.logNoise).toEqual([]);
   });
@@ -359,23 +435,23 @@ describe('captureBaseline', () => {
     // deactivation-hook warning, a timeout after the write landed. With deactivate() outside the
     // try, the site keeps the plugin OFF and every later journey drives a site the plugin is not
     // even on — and passes.
-    const { agent, sequence, fetchImpl, activate } = harness();
+    const { agent, sequence, fetchImpl, activate, browser } = harness();
     const deactivate = async () => {
       sequence.push('deactivate');
       throw new Error('wp-cli exited 1');
     };
 
-    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl))
       .rejects.toThrow('wp-cli exited 1');
     expect(sequence).toEqual(['status("acme")', 'deactivate', 'activate']);
   });
 
   it('reactivates the plugin even when the read fails, and still reports the failure', async () => {
-    const { agent, sequence, fetchImpl, deactivate, activate } = harness({
+    const { agent, sequence, fetchImpl, deactivate, activate, browser } = harness({
       agent: { snapshot: async () => { throw new Error('agent unreachable'); } },
     });
 
-    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl))
       .rejects.toThrow('agent unreachable');
     expect(sequence.at(-1)).toBe('activate');
   });
@@ -383,12 +459,12 @@ describe('captureBaseline', () => {
   it('reports BOTH failures when the read failed and the plugin could not be turned back on', async () => {
     // A reactivation failure that replaced the original error would hide why the baseline was
     // abandoned in the first place, and both facts matter to whoever reads the run.
-    const { agent, fetchImpl, deactivate } = harness({
+    const { agent, fetchImpl, deactivate, browser } = harness({
       agent: { snapshot: async () => { throw new Error('agent unreachable'); } },
     });
     const activate = async () => { throw new Error('wp-cli could not reactivate'); };
 
-    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl))
       .rejects.toThrow(/agent unreachable[\s\S]*wp-cli could not reactivate/);
   });
 });
@@ -403,10 +479,10 @@ describe('withoutBaselineNoise', () => {
 
   /** A baseline whose front-end probe saw the printed warning on BOTH renders. */
   async function baselineWithBodyNoise() {
-    const { agent, fetchImpl, deactivate, activate } = harness({
+    const { agent, fetchImpl, deactivate, activate, browser } = harness({
       bodies: [BODY_WARNING, BODY_WARNING],
     });
-    return captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+    return captureBaseline(agent, CFG, 'acme', deactivate, activate, browser, fetchImpl);
   }
 
   it('subtracts the SAME body diagnostic seen at a DIFFERENT url than the baseline probed (R60)', async () => {

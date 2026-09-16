@@ -216,7 +216,7 @@ export function createMcpServer(deps: McpDeps) {
       ...actions,
       // Unreachable for any journey that declares it uninstalls; a hard stop for one that does not.
       uninstall: async () => { throw new Error(refusal); },
-    }, deps.fetchImpl);
+    }, await launched(), deps.fetchImpl);
     const journey = prepared.suite[name];
     if (journey === undefined || journey.uninstallsPlugin) throw new Error(refusal);
 

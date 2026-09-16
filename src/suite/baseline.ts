@@ -5,7 +5,7 @@
  * would blame the theme's deprecations and another plugin's admin screens on whatever happens
  * to be under test.
  *
- * Three deltas are anchored here, and each of them is a whole class of false result:
+ * Several deltas are anchored here, and each of them is a whole class of false result:
  *  - the SURFACE, so another plugin's screens are never driven as this one's;
  *  - the SNAPSHOT, so another plugin's options and tables are never reported as this one's
  *    uninstall orphans;
@@ -15,6 +15,8 @@
  *    instead of logged — which is what `WP_DEBUG_DISPLAY` does, and which the log signal cannot
  *    reach because nothing need be written to the log at all.
  */
+import type { Browser } from '@playwright/test';
+
 import { ALL_ACTORS, isAnonymous } from '../actors/roles.ts';
 import {
   AGENT_TIMEOUT_MS, AgentBadResponseError, AgentTimeoutError, isAbort, redirectOrigin, type AgentClient,
@@ -24,6 +26,7 @@ import type { Snapshot } from '../discovery/snapshot.ts';
 import { projectSurface } from '../discovery/surface.ts';
 import type { Surface } from '../discovery/types.ts';
 import { messageOf } from '../errors.ts';
+import { openActorSession } from '../journeys/support.ts';
 import { scanBody } from '../sentinel/classify.ts';
 import { classifyPhpLogLine, type Finding } from '../sentinel/phplog.ts';
 
@@ -103,6 +106,47 @@ async function provisionActors(agent: AgentClient): Promise<void> {
   }
 }
 
+/** Where a warm-up login lands: the dashboard, whose widgets write their own user meta. */
+const WARM_UP_SCREEN = '/wp-admin/';
+
+/**
+ * Log every logged-in actor in ONCE, through the ordinary session, before the snapshot (I8).
+ *
+ * The snapshot reports user-meta KEY NAMES across all users. On a site where nobody has logged
+ * in yet, the runner's own first logins — made AFTER the baseline — write core's per-user keys:
+ * `session_tokens`, `wp_dashboard_quick_press_last_post_id` and `community-events-location` when
+ * the dashboard renders. The orphan check then blamed all three on the plugin under test. Logging
+ * in here, with the plugin deactivated, puts them in the baseline where they belong.
+ *
+ * A warm-up that fails is a failed baseline, loudly: the suite's own logins would fail the same
+ * way, and a baseline taken without them reintroduces the false orphans. What the visits observe
+ * is otherwise not judged — the plugin is off, so nothing here is attributable to it.
+ */
+async function warmUpLogins(browser: Browser, cfg: Config, agent: AgentClient): Promise<void> {
+  for (const actor of ALL_ACTORS) {
+    if (isAnonymous(actor)) continue;
+    const opened = await openActorSession(browser, cfg, agent, actor);
+    if (!opened.ok) {
+      throw new Error(
+        `warm-up login as ${actor} failed, so the baseline cannot hold the user meta a first login writes — `
+          + opened.findings.map((finding) => finding.text).join('; '),
+      );
+    }
+    const { session } = opened;
+    try {
+      session.sentinel.expect({ denyExpected: false });
+      const verdict = await session.sentinel.visit(session.page, WARM_UP_SCREEN);
+      if (verdict.length > 0) {
+        throw new Error(
+          `warm-up visit to ${WARM_UP_SCREEN} as ${actor} failed — ${verdict.map((finding) => finding.text).join('; ')}`,
+        );
+      }
+    } finally {
+      await session.close();
+    }
+  }
+}
+
 /**
  * Drive one request and classify what it emitted through both signals.
  *
@@ -178,6 +222,7 @@ async function measureNoise(
  * @param plugin     the plugin under test's slug, asked about BEFORE the deactivate erases the answer
  * @param deactivate turn the plugin under test OFF (caller supplies; usually a wp-cli call)
  * @param activate   turn it back ON
+ * @param browser    drives the warm-up logins (I8); launched before the site is touched
  * @param fetchImpl  injectable so the probe is testable without a network
  */
 export async function captureBaseline(
@@ -186,6 +231,7 @@ export async function captureBaseline(
   plugin: string,
   deactivate: () => Promise<void>,
   activate: () => Promise<void>,
+  browser: Browser,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Baseline> {
   const probes: Probe[] = [
@@ -240,6 +286,8 @@ export async function captureBaseline(
     const activeAtStart = (await agent.status(plugin)).pluginActive !== false;
     await deactivate();
     await provisionActors(agent);
+    // After the users exist and BEFORE the snapshot: a first login's own user meta is baseline.
+    await warmUpLogins(browser, cfg, agent);
     const surface = projectSurface(await agent.discover());
     const snapshot = await agent.snapshot();
     const noise = await measureNoise(agent, probes);

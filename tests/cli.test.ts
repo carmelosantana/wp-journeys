@@ -15,7 +15,7 @@ import { skillsRoot, skillTarget } from '../src/commands/skills.ts';
 import { main, manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape, wpCommands } from '../src/runner/cli.ts';
 import type { Baseline } from '../src/suite/baseline.ts';
 import { SPAWN_TIMEOUT_MS } from './helpers/timeouts.ts';
-import { FakeBrowser, FakePage, fakeAgent } from './helpers/fakes.ts';
+import { FakeBrowser, FakePage, LoggedInPage, fakeAgent } from './helpers/fakes.ts';
 
 /** A per-request deprecation this site writes whatever is under test (R45). */
 const NOISE_TEXT = 'PHP Deprecated: Creation of dynamic property Acme::$x is deprecated';
@@ -342,6 +342,9 @@ describe('what wpj run writes (one outbound filter)', () => {
       mintLogin: async () => ({ url: `http://s.test:6000/?wpj_login=${token}` }),
     });
     const browser = new FakeBrowser(new Refusing());
+    // The baseline's five warm-up logins succeed; every journey's login after them fails.
+    let contexts = 0;
+    browser.pageFor = () => (contexts++ < 5 ? new LoggedInPage() : null);
     const fetchImpl = (async () => new Response('<html><body>home</body></html>')) as unknown as typeof fetch;
 
     const { value, stdout, stderr } = await quietly(() => main(['run', '--plugin', 'acme'], {
@@ -752,17 +755,19 @@ describe('the run builder (R88: one way to build a run, shared by `wpj run` and 
     const agent = {
       status: async () => { order.push('status'); return { ok: true, wp: '7.1', php: '8.4', debugLog: true, pluginActive: false }; },
       ensureActor: async () => ({ userId: 5 }),
+      mintLogin: async () => ({ url: 'https://s.test/?wpj_login=T' }),
       discover: async () => { order.push('discover'); return RAW; },
       snapshot: async () => ({ options: [], tables: [], cron: [], userMeta: [] }),
       logDelta: async () => ({ offset: 1, lines: [], available: true }),
     } as unknown as AgentClient;
     const fetchImpl = (async () => new Response('<html><body>home</body></html>')) as typeof fetch;
 
+    const warm = new FakeBrowser(new LoggedInPage());
     const prepared = await prepareSuite(agent, { baseUrl: 'https://s.test/', secret: 'x'.repeat(16) }, 'acme', NO_PLAN, {
       deactivate: async () => { order.push('deactivate'); },
       activate: async () => { order.push('activate'); },
       uninstall: async () => { order.push('UNINSTALL'); },
-    }, fetchImpl);
+    }, warm.asBrowser(), fetchImpl);
 
     expect(order[0]).toBe('status');
     expect(order[1]).toBe('deactivate');

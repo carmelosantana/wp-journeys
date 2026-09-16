@@ -116,6 +116,7 @@ test.beforeAll(async () => {
     PLUGIN,
     () => wpTolerant('plugin', 'deactivate', PLUGIN),
     () => wp('plugin', 'activate', PLUGIN),
+    browser,
   );
 
   delta = conformanceSurface(baseline.surface, projectSurface(await agent.discover()));

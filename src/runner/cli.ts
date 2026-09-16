@@ -238,6 +238,7 @@ export interface PreparedSuite {
  * This DEACTIVATES and then REACTIVATES the plugin under test (the baseline owns that pair), so
  * the plugin is left active whatever its state before.
  *
+ * @param browser   drives the baseline's warm-up logins; launched before this is called
  * @param fetchImpl injectable so a test can drive the baseline's front-end probe without a network
  */
 export async function prepareSuite(
@@ -246,11 +247,12 @@ export async function prepareSuite(
   plugin: string,
   plan: ManifestPlan,
   actions: SiteActions,
+  browser: Browser,
   fetchImpl: typeof fetch = fetch,
 ): Promise<PreparedSuite> {
   // The baseline owns the deactivate/activate pair: everything attributable to the plugin is a
   // delta against the site WITHOUT it, and that ordering is a guarantee rather than a habit.
-  const baseline = await captureBaseline(agent, cfg, plugin, actions.deactivate, actions.activate, fetchImpl);
+  const baseline = await captureBaseline(agent, cfg, plugin, actions.deactivate, actions.activate, browser, fetchImpl);
 
   // conformanceSurface, NOT surfaceDelta: the screens are the delta, but the capability map must
   // come from the site as it IS with the plugin active. A raw delta reports only the caps the
@@ -460,12 +462,13 @@ export async function main(
   const plan = await manifestPlan(env, plugin);
 
   // The browser too: a browser that was never fetched must not cost the operator a
-  // deactivate and a reactivate of the plugin under test first.
+  // deactivate and a reactivate of the plugin under test first. The baseline needs it anyway,
+  // for its warm-up logins.
   const browser = await launch();
   let results: JourneyResult[];
   let surface: Surface;
   try {
-    const prepared = await prepareSuite(agent, cfg, plugin, plan, siteActions(wp, plugin), fetchImpl);
+    const prepared = await prepareSuite(agent, cfg, plugin, plan, siteActions(wp, plugin), browser, fetchImpl);
     surface = prepared.surface;
     results = await runSuite(prepared.suite, browser, cfg, agent, prepared.baseline);
   } finally {
