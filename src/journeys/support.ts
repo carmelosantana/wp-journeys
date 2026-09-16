@@ -29,6 +29,19 @@ import type { JourneyResult, SurfaceAxis } from './index.ts';
 /** What a journey actually does, returning how many entities it created. */
 export type JourneyBody = (page: Page, sentinel: Sentinel) => Promise<number>;
 
+/**
+ * A screen every logged-in role can reach, and no logged-out visitor can (R54, R67).
+ *
+ * `profile.php` needs only `read`, which subscriber upwards all hold, and WordPress bounces an
+ * anonymous request for it to wp-login.php. Every denial a journey expects is ALSO satisfied
+ * by that bounce, so a journey whose session was never established runs as an anonymous
+ * visitor and passes having proved nothing. `authenticate` below catches a mint that bounces
+ * to login or never leaves the token URL, but not one that redirects away to an ordinary 200
+ * page without a session. One screen asserted as ALLOWED, which only a real session can
+ * reach, is what makes that impossible: a secretly-anonymous journey fails on its first step.
+ */
+export const CONTROL_SCREEN = '/wp-admin/profile.php';
+
 /** A journey's own check that failed, as opposed to something the sentinel observed. */
 function assertionFinding(text: string): Finding {
   return { kind: 'assertion', text };

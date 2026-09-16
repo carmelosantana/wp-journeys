@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { CONTROL_SCREEN } from '../src/journeys/support.ts';
 import { interpret } from '../src/manifest/interpret.ts';
 import { loadManifest } from '../src/manifest/load.ts';
 import { parseManifest } from '../src/manifest/schema.ts';
@@ -242,6 +243,9 @@ describe('interpret', () => {
   }
 
   const ADMIN_LANDING = landsOn('https://s.test/wp-admin/');
+  /** The control visit's answer (R67): profile.php served, which only a real session gets. */
+  const CONTROL = landsOn(`https://s.test${CONTROL_SCREEN}`);
+  const MINT = 'https://s.test/?wpj_login=TOKEN';
   const LOGIN_BOUNCE = landsOn('https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F');
   const SCREEN = '/wp-admin/admin.php?page=acme';
 
@@ -251,17 +255,17 @@ describe('interpret', () => {
 
     it('passes an expected denial served as the login bounce, after a REAL login', async () => {
       const { page, run } = arrange(denied);
-      page.navigations = [ADMIN_LANDING, LOGIN_BOUNCE];
+      page.navigations = [ADMIN_LANDING, CONTROL, LOGIN_BOUNCE];
 
       const result = await run();
 
       expect(result.findings).toEqual([]);
-      expect(page.gotos).toEqual(['https://s.test/?wpj_login=TOKEN', SCREEN]);
+      expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, SCREEN]);
     });
 
     it('fails an expected denial that the document actually served', async () => {
       const { page, run } = arrange(denied);
-      page.navigations = [ADMIN_LANDING, landsOn(`https://s.test${SCREEN}`)];
+      page.navigations = [ADMIN_LANDING, CONTROL, landsOn(`https://s.test${SCREEN}`)];
 
       const result = await run();
 
@@ -272,11 +276,11 @@ describe('interpret', () => {
 
     it('passes an allowed screen that served, and fails one that bounced to login', async () => {
       const ok = arrange(allowed);
-      ok.page.navigations = [ADMIN_LANDING, landsOn(`https://s.test${SCREEN}`)];
+      ok.page.navigations = [ADMIN_LANDING, CONTROL, landsOn(`https://s.test${SCREEN}`)];
       expect((await ok.run()).findings).toEqual([]);
 
       const bounced = arrange(allowed);
-      bounced.page.navigations = [ADMIN_LANDING, LOGIN_BOUNCE];
+      bounced.page.navigations = [ADMIN_LANDING, CONTROL, LOGIN_BOUNCE];
       expect((await bounced.run()).findings).toMatchObject([
         { kind: 'response', text: expect.stringContaining('the actor is not authenticated') },
       ]);
@@ -293,14 +297,14 @@ describe('interpret', () => {
         ],
       };
       const { page, run } = arrange(two);
-      page.navigations = [ADMIN_LANDING, LOGIN_BOUNCE, LOGIN_BOUNCE];
+      page.navigations = [ADMIN_LANDING, CONTROL, LOGIN_BOUNCE, LOGIN_BOUNCE];
 
       const result = await run();
 
       expect(result.findings).toMatchObject([
         { kind: 'response', url: expect.stringContaining('wp-login.php'), text: expect.stringContaining('not authenticated') },
       ]);
-      expect(page.gotos).toEqual(['https://s.test/?wpj_login=TOKEN', SCREEN, '/wp-admin/edit.php']);
+      expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, SCREEN, '/wp-admin/edit.php']);
     });
 
     it('never satisfies a denial with an ANONYMOUS visitor: a refused login stops the journey', async () => {
@@ -315,10 +319,29 @@ describe('interpret', () => {
       expect(result.findings.at(-1)).toMatchObject({
         kind: 'assertion', text: expect.stringContaining('could not authenticate as editor'),
       });
-      expect(page.gotos).toEqual(['https://s.test/?wpj_login=TOKEN']);
+      expect(page.gotos).toEqual([MINT]);
     });
 
-    it('lets an anonymous journey assert a denial with no login at all', async () => {
+    it('never lets a deny-only journey pass while the run is ANONYMOUS: the control visit catches a sessionless mint (R67)', async () => {
+      // runAsActor's guards catch a mint that bounces to login or that never leaves the token
+      // URL. They cannot catch a mint that redirects AWAY to an ordinary 200 page without
+      // establishing a session: the verdict is empty, the token is gone, and the body runs
+      // logged out. Every deny screen is then satisfied by WordPress's login bounce, and the
+      // shipped example's second journey is exactly this shape. One screen asserted as ALLOWED,
+      // which only a real session can reach, makes that impossible.
+      const { page, run } = arrange(denied);
+      page.navigations = [landsOn('https://s.test/'), LOGIN_BOUNCE, LOGIN_BOUNCE];
+
+      const result = await run();
+
+      expect(result.findings).toMatchObject([
+        { kind: 'response', url: expect.stringContaining('wp-login.php'), text: expect.stringContaining('not authenticated') },
+      ]);
+      expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, SCREEN]);
+    });
+
+    it('lets an anonymous journey assert a denial with no login and no control visit', async () => {
+      // Anonymous has no session to prove, so a control visit would only ever bounce to login.
       const anonymous = { name: 'n', actor: 'anonymous', surface: 'admin', screens: [{ url: SCREEN, allow: [], deny: ['anonymous'] }] };
       const { page, run, calls } = arrange(anonymous);
       page.navigations = [LOGIN_BOUNCE];
@@ -326,6 +349,7 @@ describe('interpret', () => {
       const result = await run();
 
       expect(result.findings).toEqual([]);
+      expect(page.gotos).toEqual([SCREEN]);
       expect(calls.filter((c) => c.startsWith('mintLogin'))).toEqual([]);
     });
   });
@@ -336,14 +360,14 @@ describe('interpret', () => {
 
     it('writes the field, submits once, and passes when the value reads back on the frontend', async () => {
       const { page, run } = arrange(journey);
-      page.navigations = [ADMIN_LANDING];
+      page.navigations = [ADMIN_LANDING, CONTROL];
       page.body = '<html><body><h1>Hello from wp-journeys</h1></body></html>';
 
       const result = await run();
 
       expect(result.findings).toEqual([]);
       expect(result.entitiesCreated).toBe(1);
-      expect(page.gotos).toEqual(['https://s.test/?wpj_login=TOKEN', SCREEN, '/']);
+      expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, SCREEN, '/']);
       expect(page.fills).toEqual([['#acme_title', 'Hello from wp-journeys']]);
       expect(page.keys).toEqual(['Enter']);
     });
@@ -352,7 +376,7 @@ describe('interpret', () => {
       // A validation or capability failure redirects back to the form with a 2xx. Only the
       // read-back can tell that from success.
       const { page, run } = arrange(journey);
-      page.navigations = [ADMIN_LANDING];
+      page.navigations = [ADMIN_LANDING, CONTROL];
 
       const result = await run();
 
@@ -369,19 +393,19 @@ describe('interpret', () => {
 
     it('renders through the agent and passes when the marker is present and the tag expanded', async () => {
       const { page, run } = arrange(journey);
-      page.navigations = [ADMIN_LANDING];
+      page.navigations = [ADMIN_LANDING, CONTROL];
       page.body = '<div data-wpj-render="1"><p>expanded</p></div>';
 
       const result = await run();
 
       expect(result.findings).toEqual([]);
-      expect(page.gotos).toEqual(['https://s.test/?wpj_login=TOKEN', '/?wpj_render=%5Bacme%5D']);
+      expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, '/?wpj_render=%5Bacme%5D']);
     });
 
     it('fails when the render marker is absent — the endpoint never ran, so nothing was asserted', async () => {
       // A refused guard serves the ordinary home page with a 200 (R5).
       const { page, run } = arrange(journey);
-      page.navigations = [ADMIN_LANDING];
+      page.navigations = [ADMIN_LANDING, CONTROL];
       page.body = '<html><body>home</body></html>';
 
       const result = await run();
@@ -393,7 +417,7 @@ describe('interpret', () => {
 
     it('fails when the tag came back verbatim — it never expanded', async () => {
       const { page, run } = arrange(journey);
-      page.navigations = [ADMIN_LANDING];
+      page.navigations = [ADMIN_LANDING, CONTROL];
       page.body = '<div data-wpj-render="1">[acme]</div>';
 
       const result = await run();

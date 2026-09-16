@@ -15,16 +15,17 @@
  *  - a shortcode is proven to have rendered THROUGH the agent and to have expanded, by the same
  *    check the discovered-surface journey uses (R5).
  *
- * Authentication is `runAsActor`'s, so a manifest denial for a logged-in actor cannot be
- * satisfied by an anonymous visitor: a refused or bounced login stops the journey before its
- * first screen.
+ * Authentication is `runAsActor`'s, and a control visit to a screen the actor must be SERVED
+ * precedes every step (R67), so a manifest denial for a logged-in actor cannot be satisfied by
+ * an anonymous visitor: a refused, bounced or sessionless login fails before the first screen.
  */
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { isAnonymous } from '../actors/roles.ts';
 import { messageOf } from '../errors.ts';
 import type { Journey } from '../journeys/index.ts';
-import { runAsActor } from '../journeys/support.ts';
+import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
 import { shortcodeRenderDefect, shortcodeRenderUrl } from '../suite/rendered-surface.ts';
 import type { Manifest, ManifestJourney } from './schema.ts';
 
@@ -59,6 +60,14 @@ function journeyFor(entry: ManifestJourney, pluginDir: string): Journey {
       }
       return runAsActor(browser, cfg, agent, entry.name, entry.actor, entry.surface, async (page, sentinel) => {
         let created = 0;
+
+        // The control visit (R67): one screen this actor MUST be served, before any step. A
+        // deny-only journey would otherwise be satisfied by the login bounce even when the mint
+        // redirected away without a session — and the shipped example is deny-only.
+        if (!isAnonymous(entry.actor)) {
+          sentinel.expect({ denyExpected: false });
+          await sentinel.visit(page, CONTROL_SCREEN);
+        }
 
         for (const screen of entry.screens ?? []) {
           // The schema guarantees the actor is in exactly one of the two lists.

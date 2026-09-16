@@ -5,7 +5,7 @@
 import { Actor, isAnonymous } from '../actors/roles.ts';
 import type { Surface } from '../discovery/types.ts';
 import type { Journey, JourneyResult, SurfaceAxis } from '../journeys/index.ts';
-import { runAsActor } from '../journeys/support.ts';
+import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
 import { accessMatrix } from './admin-access-matrix.ts';
 
 /**
@@ -24,14 +24,6 @@ export interface SweepStep {
   url: string;
   denyExpected: boolean;
 }
-
-/**
- * A screen every logged-in role can reach, and no logged-out visitor can (R54).
- *
- * `profile.php` needs only `read`, which subscriber upwards all hold, and WordPress bounces an
- * anonymous request for it to wp-login.php.
- */
-const CONTROL_SCREEN = '/wp-admin/profile.php';
 
 /**
  * What an actor's sweep will assert, in order. Pure, so the interesting part is testable.
