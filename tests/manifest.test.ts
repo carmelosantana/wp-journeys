@@ -331,14 +331,27 @@ describe('interpret', () => {
     const denied = { name: 'd', actor: 'editor', surface: 'admin', screens: [{ url: SCREEN, allow: [], deny: ['editor'] }] };
     const allowed = { name: 'a', actor: 'editor', surface: 'admin', screens: [{ url: SCREEN, allow: ['editor'], deny: [] }] };
 
-    it('passes an expected denial served as the login bounce, after a REAL login', async () => {
+    it('passes an expected denial served as a 403, after a REAL login', async () => {
       const { page, run } = arrange(denied);
-      page.navigations = [ADMIN_LANDING, CONTROL, LOGIN_BOUNCE];
+      page.navigations = [ADMIN_LANDING, CONTROL, () => response(403, `https://s.test${SCREEN}`)];
 
       const result = await run();
 
       expect(result.findings).toEqual([]);
       expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, SCREEN]);
+    });
+
+    it('fails an expected denial served as the login bounce after a real login: the session was lost', async () => {
+      // WordPress denies a logged-in user with a 403. A bounce to wp-login.php mid-journey means
+      // the actor was logged out, and the "denial" would pass for the wrong reason.
+      const { page, run } = arrange(denied);
+      page.navigations = [ADMIN_LANDING, CONTROL, LOGIN_BOUNCE];
+
+      const result = await run();
+
+      expect(result.findings).toMatchObject([
+        { kind: 'response', text: expect.stringContaining('session lost') },
+      ]);
     });
 
     it('fails an expected denial that the document actually served', async () => {

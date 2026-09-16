@@ -14,8 +14,8 @@ export { SIGNAL_KINDS, classifyPhpLogLine } from './phplog.ts';
 /** What the journey said it expected of the document being classified. */
 export interface Expectation {
   /**
-   * True when the journey is asserting that this actor must be DENIED. A 403 — or WordPress's
-   * login redirect — then satisfies the assertion, and a 200 on the screen itself violates it.
+   * True when the journey is asserting that this actor must be DENIED. A 403 — or, for an
+   * anonymous session only, WordPress's login redirect — then satisfies the assertion, and a 200 on the screen itself violates it.
    * This is not "ignore all 4xx": with `false`, an unexpected denial is still a finding.
    */
   denyExpected: boolean;
@@ -79,11 +79,26 @@ function isLoginPage(url: string): boolean {
  * or the denial it explicitly expected.
  *
  * Pass the response's FINAL url, not the requested one, or the login redirect is invisible.
+ *
+ * `session.authenticated` says the page belongs to a LOGGED-IN actor. WordPress denies a
+ * logged-in user with a 403, never with a login redirect, so for such a session landing on
+ * wp-login.php always means the session was lost — a plugin logged the actor out mid-sweep —
+ * and is a finding even when a denial was expected. Accepting it would pass every later declared
+ * denial for the wrong reason. Omitted, the session is treated as anonymous.
  */
-export function classifyNavigation(status: number, url: string, expect: Expectation): Finding | null {
+export function classifyNavigation(
+  status: number, url: string, expect: Expectation, session: { authenticated: boolean } = { authenticated: false },
+): Finding | null {
   const login = isLoginPage(url);
   // The judgement is made on the real URL; only what the finding CARRIES is redacted (R51).
   const safe = redactLoginToken(url);
+  if (login && session.authenticated) {
+    return {
+      kind: 'response', status, url: safe,
+      text: `redirected to the login page at ${safe} — the actor is not authenticated `
+        + '(session lost: a login redirect is not a denial for a logged-in actor)',
+    };
+  }
   if (expect.denyExpected) {
     if (status === 401 || status === 403 || login) return null;
     return {

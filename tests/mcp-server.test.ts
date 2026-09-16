@@ -544,6 +544,20 @@ describe('navigate (R86)', () => {
     await server.shutdown();
   });
 
+  it('does not pass a declared denial through a login bounce for a logged-in actor: the session was lost', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    h.page.navigations = [landsOn('https://s.test/wp-admin/')];
+    await call(server, 'login_as', { actor: 'editor' });
+    h.page.navigations = [() => response(200, 'https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F')];
+
+    const { text, isError } = await call(server, 'navigate', { path: '/wp-admin/options-general.php', expect_denied: true });
+
+    expect(isError).toBe(true);
+    expect(text).toContain('session lost: a login redirect is not a denial for a logged-in actor');
+    await server.shutdown();
+  });
+
   it('refuses a non-boolean expect_denied', async () => {
     const { server } = await anonymous();
     const { isError, text } = await call(server, 'navigate', { path: '/', expect_denied: 'yes' });

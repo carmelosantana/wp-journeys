@@ -110,12 +110,17 @@ function dedupe(findings: Finding[], fromNavigation: WeakSet<Finding>): Finding[
 
 /** What the sentinel needs to know about the session it watches. */
 export interface SentinelOptions {
+  /**
+   * Whether the page belongs to a logged-in actor. Required, never defaulted: for such a session
+   * a login redirect is a LOST session, not a denial, and guessing wrong either way is silent.
+   */
+  authenticated: boolean;
   /** The shared secret, scrubbed from any page-error text before it becomes a finding. */
   secret?: string;
 }
 
 export async function installSentinel(
-  page: Page, agent: AgentClient, options: SentinelOptions = {},
+  page: Page, agent: AgentClient, options: SentinelOptions,
 ): Promise<Sentinel> {
   const findings: Finding[] = [];
 
@@ -361,7 +366,9 @@ export async function installSentinel(
       // The FINAL url, not the requested one: WordPress denies a logged-out actor by
       // redirecting to wp-login.php, and the requested URL cannot show that.
       landed = { status: response.status(), url: redactLoginToken(response.url()) };
-      const finding = classifyNavigation(response.status(), response.url(), expectation);
+      const finding = classifyNavigation(
+        response.status(), response.url(), expectation, { authenticated: options.authenticated },
+      );
       if (finding) {
         findings.push(finding);
         fromNavigation.add(finding);

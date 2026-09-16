@@ -29,6 +29,7 @@ reason.
 | A cron handler trusted without checking where it came from (R79) | A plugin's leftover mu-plugin answers the plugin's own orphaned hook, so "something handles it" read as "core handles it". | The first fix used `has_action()`. | A hook is excluded as core's only when **every** callback on it is defined under `wp-includes` or `wp-admin`. `lifecycle` fails if the plugin is still active, or if the agent cannot say whether it is. |
 | A non-2xx main document treated as content | A 502 page from a stopped container, or a 404 from a mistyped URL, still renders text that content assertions can match. | Plan revision, 2026-09-09. | `sentinel.visit` asserts the document's status through `classifyNavigation`. Journeys never call `page.goto`. |
 | "Ignore all 4xx" | An **unexpected** 403 is a permission bug, and it would pass. | A tempting shortcut. | `classifyNavigation` accepts 401, 403 or the login redirect **only** when the visit declared `denyExpected`. A 200 on a declared denial is an access hole. A 404 or 5xx on a declared denial is still a finding. |
+| A login bounce accepted as a logged-in actor's denial | If a plugin logs the actor out partway through a sweep, every later declared denial passes through the login redirect. | The final review. | For a logged-in session, landing on `wp-login.php` is always a `session lost` finding. Only the anonymous actor may be denied by the login redirect. |
 | A sticky expectation | Once a journey declares one denial, every later screen accepts a 403. | R40. | `expect()` is one-shot. `visit()` consumes it and reverts to strict. |
 | A sentinel shared by two journeys | The sentinel de-duplicates what it reports, so journey 2's genuine 5xx on a URL that journey 1 already reported disappears. | The `Sentinel` contract. | One sentinel per journey, on a fresh page (`runAsActor`). |
 | A run that registered nothing | `0 passed, 0 failed` reads like a clean run, and exit 0 is what CI believes. | The exit-code floor. | Zero journeys exits 1, and the summary says so. |
@@ -41,8 +42,11 @@ A denial is evidence only when all three of these hold:
 
 1. **The session is real.** A served control visit (`/wp-admin/profile.php`) must come first.
    Otherwise the login redirect satisfies the denial for a visitor who was never logged in.
-2. **The denial is a denial.** It must be a 401, a 403, or WordPress's login redirect. A 404
-   (wrong URL), a 5xx (a crash), or a `wp_die` page with a 200 status is not a denial.
+2. **The denial is a denial.** It must be a 401, a 403, or — for the anonymous actor only —
+   WordPress's login redirect. WordPress denies a logged-in user with a 403, so a logged-in
+   actor that lands on the login page has lost its session, and that is a finding even where a
+   denial was declared. A 404 (wrong URL), a 5xx (a crash), or a `wp_die` page with a 200
+   status is not a denial.
 3. **The denial was declared for this visit.** An undeclared 403 is a failure.
 
 The permission matrix decides which actors are denied from the site's **real** capability

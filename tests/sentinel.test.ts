@@ -92,7 +92,7 @@ const CLEAN: LogDelta = { offset: 100, lines: [], available: true };
 async function setup(deltas: LogDelta[] = []) {
   const page = new FakePage();
   const { agent, calls } = fakeAgent([CLEAN, ...deltas]);
-  const sentinel = await installSentinel(page.asPage(), agent);
+  const sentinel = await installSentinel(page.asPage(), agent, { authenticated: false });
   return { page, sentinel, calls };
 }
 
@@ -247,6 +247,28 @@ describe('the live listeners', () => {
     ]);
   });
 
+  it('treats a login bounce as a lost session, not a denial, when the session is authenticated', async () => {
+    const page = new FakePage();
+    const { agent } = fakeAgent([CLEAN]);
+    const sentinel = await installSentinel(page.asPage(), agent, { authenticated: true });
+    page.navigations = [() => response(200, 'https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F')];
+
+    sentinel.expect({ denyExpected: true });
+    const verdict = await sentinel.visit(page.asPage(), '/wp-admin/options-general.php');
+
+    expect(verdict).toMatchObject([{ kind: 'response', text: expect.stringContaining('session lost') }]);
+  });
+
+  it('still accepts a login bounce as a denial for an anonymous session', async () => {
+    const page = new FakePage();
+    const { agent } = fakeAgent([CLEAN]);
+    const sentinel = await installSentinel(page.asPage(), agent, { authenticated: false });
+    page.navigations = [() => response(200, 'https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F')];
+
+    sentinel.expect({ denyExpected: true });
+    expect(await sentinel.visit(page.asPage(), '/wp-admin/options-general.php')).toEqual([]);
+  });
+
   it('redacts a login token from a navigation error it rethrows', async () => {
     const { page, sentinel } = await setup();
     page.navigations = [() => { throw new Error('page.goto: net::ERR_UNSAFE_PORT at http://s.test:6000/?wpj_login=SECRETTOKENabc'); }];
@@ -293,7 +315,7 @@ describe('the live listeners', () => {
     const secret = 'q'.repeat(24);
     const page = new FakePage();
     const { agent } = fakeAgent([CLEAN]);
-    const sentinel = await installSentinel(page.asPage(), agent, { secret });
+    const sentinel = await installSentinel(page.asPage(), agent, { authenticated: false, secret });
     page.current = 'https://s.test/?wpj_login=SECRETTOKENabc';
     page.emit('pageerror', new Error(`boom ${secret} at https://s.test/?wpj_login=SECRETTOKENabc`));
 
@@ -465,7 +487,7 @@ describe('sentinel.drain', () => {
       { offset: 0, lines: [], available: false, reason: 'debug.log is not readable' },
       { offset: 900, lines: [], available: true },
     ]);
-    const sentinel = await installSentinel(page.asPage(), agent);
+    const sentinel = await installSentinel(page.asPage(), agent, { authenticated: false });
 
     const findings = await sentinel.drain();
 

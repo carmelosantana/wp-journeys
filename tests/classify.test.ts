@@ -59,6 +59,29 @@ describe('classifyNavigation', () => {
       .toBeNull();
   });
 
+  it('never accepts a login bounce as a denial for a LOGGED-IN actor — the session was lost', () => {
+    // WordPress denies a logged-in user with a 403. Landing on wp-login.php means the session is
+    // gone (a plugin logged the actor out mid-sweep), and every later "denial" would pass for
+    // the wrong reason.
+    const bounce = 'https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F';
+    const denied = classifyNavigation(200, bounce, denyExpected, { authenticated: true });
+    expect(denied).toMatchObject({ kind: 'response', status: 200, url: bounce });
+    expect(denied?.text).toContain('session lost: a login redirect is not a denial for a logged-in actor');
+    const served = classifyNavigation(200, bounce, allowed, { authenticated: true });
+    expect(served?.text).toContain('session lost');
+    expect(served?.text).toContain('not authenticated');
+  });
+
+  it('still accepts a 403 as a logged-in actor\'s denial', () => {
+    expect(classifyNavigation(403, '/wp-admin/admin.php?page=acme', denyExpected, { authenticated: true })).toBeNull();
+  });
+
+  it('leaves the anonymous case unchanged: a login bounce is how WordPress denies a visitor', () => {
+    const bounce = 'https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F';
+    expect(classifyNavigation(200, bounce, denyExpected, { authenticated: false })).toBeNull();
+    expect(classifyNavigation(200, bounce, denyExpected)).toBeNull();
+  });
+
   it('flags an authenticated navigation bounced to the login page — a failed login reads as a clean 2xx', () => {
     const finding = classifyNavigation(200, 'https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F', allowed);
     expect(finding?.text).toBe(

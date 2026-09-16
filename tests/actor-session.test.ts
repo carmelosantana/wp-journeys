@@ -79,6 +79,35 @@ describe('openActorSession', () => {
     expect(browser.closed).toEqual([true]);
   });
 
+  it('arms a logged-in session so a later login bounce is a lost session, never a denial', async () => {
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    const { agent } = fakeAgent();
+    page.navigations = [landsOn('https://s.test/wp-admin/'), () => response(200, 'https://s.test/wp-login.php?redirect_to=x')];
+
+    const opened = await openActorSession(browser.asBrowser(), CFG, agent, Actor.SUBSCRIBER);
+    if (!opened.ok) throw new Error('expected a session');
+    opened.session.sentinel.expect({ denyExpected: true });
+    const verdict = await opened.session.sentinel.visit(opened.session.page, '/wp-admin/options-general.php');
+
+    expect(verdict).toMatchObject([{ text: expect.stringContaining('session lost') }]);
+    await opened.session.close();
+  });
+
+  it('arms an anonymous session so a login bounce is still a denial', async () => {
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    const { agent } = fakeAgent();
+    page.navigations = [() => response(200, 'https://s.test/wp-login.php?redirect_to=x')];
+
+    const opened = await openActorSession(browser.asBrowser(), CFG, agent, Actor.ANONYMOUS);
+    if (!opened.ok) throw new Error('expected a session');
+    opened.session.sentinel.expect({ denyExpected: true });
+
+    expect(await opened.session.sentinel.visit(opened.session.page, '/wp-admin/options-general.php')).toEqual([]);
+    await opened.session.close();
+  });
+
   it('refuses a session whose token was refused in place (R54), never naming the token', async () => {
     const page = new FakePage();
     const browser = new FakeBrowser(page);
