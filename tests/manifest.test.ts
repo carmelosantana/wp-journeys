@@ -715,6 +715,12 @@ describe('interpret', () => {
       expect(page.gotos).toEqual([MINT, SCREEN]);
     });
 
+    it('refuses a gate screen that would leave the site, before anything is visited (R86)', () => {
+      for (const screen of ['//evil.example/wp-admin/', '/\\evil.example/']) {
+        expect(() => gated({ screen }, [echo]), screen).toThrow(/gate screen .* is not a path on the target site/);
+      }
+    });
+
     it('has no precondition, and makes no visit, when the manifest declares no gate', async () => {
       const { page, runs } = gated(undefined, [echo]);
 

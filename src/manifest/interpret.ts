@@ -38,6 +38,7 @@ import { shortcodeRenderDefect, shortcodeRenderUrl } from '../agent/render.ts';
 import type { Config } from '../config.ts';
 import { messageOf } from '../errors.ts';
 import type { Journey, JourneyResult } from '../journeys/index.ts';
+import { isSitePath } from '../site-path.ts';
 import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
 import type { Manifest, ManifestJourney } from './schema.ts';
 
@@ -170,9 +171,16 @@ function readsBack(text: string, written: string): boolean {
 /** Resolves when the gate held; rejects with why it did not. Shared by every journey of a manifest. */
 type Gate = (browser: Browser, cfg: Config, agent: AgentClient) => Promise<void>;
 
-/** A gate's screen: a URL when it starts with `/`, else a plugin page slug served by `admin.php`. */
+/**
+ * A gate's screen: a URL when it starts with `/`, else a plugin page slug served by `admin.php`.
+ * A slash-led screen that would leave the target site (`//host/…`) is refused (R86).
+ */
 export function gateUrl(screen: string): string {
-  return screen.startsWith('/') ? screen : `/wp-admin/admin.php?page=${encodeURIComponent(screen)}`;
+  if (!screen.startsWith('/')) return `/wp-admin/admin.php?page=${encodeURIComponent(screen)}`;
+  if (!isSitePath(screen)) {
+    throw new Error(`gate screen ${JSON.stringify(screen)} is not a path on the target site — start it with exactly one "/"`);
+  }
+  return screen;
 }
 
 /**
