@@ -1,5 +1,10 @@
 # First contact: Alpaca Bot
 
+> **A lab notebook.** This page is the record of wp-journeys' first run against a real plugin,
+> Alpaca Bot, which is the author's own. It is kept for what it taught the runner, not as a report
+> on that plugin: the Alpaca Bot defect it records is known to, and tracked by, the plugin's
+> author.
+
 The first run of wp-journeys against a real plugin: Alpaca Bot 0.5.0 (`develop`), mounted on the
 scratch site `wpjtest` (WordPress 7.1, PHP 8.4). Tasks 1-13 built the runner against a synthetic
 fixture. This page records what the contract got wrong when it met a real plugin, and what was
@@ -80,7 +85,7 @@ because `lifecycle` uninstalls the plugin every other journey needs.
 The working invocation:
 
 ```bash
-WPH="node $WPH_CHECKOUT/bin/wph.js"
+WPH="${WPH:-wph}"                              # the wp-harness CLI
 $WPH mount wpjtest plugin alpaca-bot "$HOME/Projects/Alpaca Bot/wp-alpaca/plugins/alpaca-bot"
 set -a; . ./.env; set +a                       # WPJ_BASE_URL, WPJ_AGENT_SECRET
 export WPJ_WP="$WPH wp wpjtest --"
