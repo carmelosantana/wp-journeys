@@ -48,6 +48,12 @@ export interface Sentinel {
    * abandon the journey.
    */
   visit(page: Page, url: string): Promise<Finding[]>;
+  /**
+   * The document the LAST `visit()` landed on: its status and final URL (redacted, R51), or
+   * `null` before any visit and after one that produced no response — never an earlier visit's
+   * answer standing in for a later one (R86).
+   */
+  lastDocument(): { status: number; url: string } | null;
   /** Collect everything observed so far, including the PHP log delta. */
   drain(): Promise<Finding[]>;
 }
@@ -109,6 +115,8 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
 
   const STRICT: Expectation = { denyExpected: false };
   let declared: Expectation = STRICT;
+
+  let landed: { status: number; url: string } | null = null;
 
   /** Read the declared expectation and revert to strict: it applies to ONE navigation (R40). */
   function consumeExpectation(): Expectation {
@@ -288,6 +296,8 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
       // Consumed before the navigation can throw, so a failed visit cannot leak its
       // expectation onto the next one (R40).
       const expectation = consumeExpectation();
+      // Cleared before the navigation can throw, for the same reason.
+      landed = null;
 
       // Settle BEFORE marking (R46). The requestfailed listener does not push at event time:
       // it queues inspect(), and the finding lands only when request.response() resolves —
@@ -328,6 +338,7 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
 
       // The FINAL url, not the requested one: WordPress denies a logged-out actor by
       // redirecting to wp-login.php, and the requested URL cannot show that.
+      landed = { status: response.status(), url: redactLoginToken(response.url()) };
       const finding = classifyNavigation(response.status(), response.url(), expectation);
       if (finding) {
         findings.push(finding);
@@ -336,6 +347,10 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
       await page.waitForLoadState('networkidle');
       await scanCurrentBody();
       return finding ? [finding] : [];
+    },
+
+    lastDocument() {
+      return landed === null ? null : { ...landed };
     },
 
     async drain(): Promise<Finding[]> {

@@ -655,3 +655,36 @@ describe('a navigation with no response to assert', () => {
     expect(page.loadStates).toEqual([]);
   });
 });
+
+describe('sentinel.lastDocument (R86)', () => {
+  it('reports the status and FINAL url of the document the last visit landed on', async () => {
+    const { page, sentinel } = await setup();
+    page.navigations = [() => response(403, 'https://s.test/wp-login.php?redirect_to=x')];
+    sentinel.expect({ denyExpected: true });
+
+    await sentinel.visit(page.asPage(), '/wp-admin/options-general.php');
+
+    expect(sentinel.lastDocument()).toEqual({ status: 403, url: 'https://s.test/wp-login.php?redirect_to=x' });
+  });
+
+  it('is null before any visit, and after a visit that produced no response — never a stale one', async () => {
+    const { page, sentinel } = await setup();
+    expect(sentinel.lastDocument()).toBeNull();
+
+    await sentinel.visit(page.asPage(), 'https://s.test/a');
+    expect(sentinel.lastDocument()).toMatchObject({ status: 200 });
+
+    page.navigations = [() => null];
+    await sentinel.visit(page.asPage(), 'https://s.test/b');
+    expect(sentinel.lastDocument()).toBeNull();
+  });
+
+  it('never carries a minted login token', async () => {
+    const { page, sentinel } = await setup();
+    page.navigations = [() => response(200, 'https://s.test/?wpj_login=SECRET-TOKEN')];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/?wpj_login=SECRET-TOKEN');
+
+    expect(JSON.stringify(sentinel.lastDocument())).not.toContain('SECRET-TOKEN');
+  });
+});
