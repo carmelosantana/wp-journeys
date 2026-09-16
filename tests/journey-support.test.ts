@@ -4,123 +4,13 @@
  * Only the browser and the agent are faked: the sentinel is what decides whether a journey is
  * clean, so a test that stubbed it would prove nothing about the thing being wired up here.
  */
-import type { Browser, BrowserContext, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { describe, expect, it } from 'vitest';
 
 import { Actor } from '../src/actors/roles.ts';
-import type { AgentClient, LogDelta } from '../src/agent/client.ts';
-import type { Config } from '../src/config.ts';
 import { runAsActor } from '../src/journeys/support.ts';
 import type { Sentinel } from '../src/sentinel/sentinel.ts';
-
-const CFG: Config = { baseUrl: 'https://s.test/', secret: 'x'.repeat(16) };
-
-/** A response as the sentinel reads one: status and final URL, both synchronous. */
-function response(status: number, url: string): never {
-  return { status: () => status, url: () => url } as never;
-}
-
-/** A navigation that settles on `url`: the mint 302s into wp-admin, so that is its landing. */
-function landsOn(url: string): () => never {
-  return () => response(200, url);
-}
-
-/** The slice of Playwright's Page the sentinel and the helper touch. */
-class FakePage {
-  readonly gotos: string[] = [];
-  /** What each successive goto does; a 200 on the requested URL once the queue runs out. */
-  navigations: Array<(url: string) => unknown> = [];
-  body = '<html><body>ok</body></html>';
-  private readonly handlers: Record<string, Array<(arg: never) => unknown>> = {};
-
-  on(event: string, handler: (arg: never) => unknown): void {
-    (this.handlers[event] ??= []).push(handler);
-  }
-
-  emit(event: string, arg: unknown): void {
-    for (const handler of this.handlers[event] ?? []) void handler(arg as never);
-  }
-
-  /** Where the page SETTLED, after redirects — how a login that failed becomes visible. */
-  current = 'https://s.test/';
-
-  async goto(url: string): Promise<unknown> {
-    this.gotos.push(url);
-    const step = this.navigations.shift();
-    const landed = step ? step(url) : response(200, url);
-    const settled = landed as { url?: () => string } | null;
-    if (settled && typeof settled.url === 'function') this.current = settled.url();
-    return landed;
-  }
-
-  url(): string {
-    return this.current;
-  }
-
-  async content(): Promise<string> {
-    return this.body;
-  }
-
-  async waitForLoadState(): Promise<void> {}
-
-  asPage(): Page {
-    return this as unknown as Page;
-  }
-}
-
-/** A browser whose contexts hand out ONE page, so a test can drive it before the run starts. */
-class FakeBrowser {
-  readonly options: unknown[] = [];
-  readonly closed: boolean[] = [];
-
-  constructor(readonly page: FakePage) {}
-
-  async newContext(options: unknown): Promise<BrowserContext> {
-    this.options.push(options);
-    const at = this.closed.push(false) - 1;
-    const context = {
-      newPage: async (): Promise<Page> => this.page.asPage(),
-      close: async (): Promise<void> => {
-        this.closed[at] = true;
-      },
-    };
-    return context as unknown as BrowserContext;
-  }
-
-  asBrowser(): Browser {
-    return this as unknown as Browser;
-  }
-}
-
-const CLEAN: LogDelta = { offset: 100, lines: [], available: true };
-
-/**
- * An agent that records what it was asked for. Any method a test did not arrange throws, so a
- * helper that calls something it should not — minting a login for the anonymous actor, say —
- * fails loudly instead of quietly working.
- */
-function fakeAgent(over: Partial<AgentClient> = {}) {
-  const calls: string[] = [];
-  const base: Partial<AgentClient> = {
-    logDelta: async () => CLEAN,
-    ensureActor: async () => ({ userId: 42 }),
-    mintLogin: async () => ({ url: 'https://s.test/?wpj_login=TOKEN' }),
-  };
-  const arranged = { ...base, ...over } as Record<string, unknown>;
-  const agent = new Proxy({}, {
-    get(_target, property: string) {
-      const method = arranged[property];
-      if (typeof method !== 'function') {
-        throw new Error(`runAsActor must not call agent.${property}()`);
-      }
-      return (...args: unknown[]) => {
-        calls.push(`${property}(${args.map((a) => JSON.stringify(a)).join(', ')})`);
-        return (method as (...a: unknown[]) => unknown)(...args);
-      };
-    },
-  }) as AgentClient;
-  return { agent, calls };
-}
+import { CFG, CLEAN, FakeBrowser, FakePage, fakeAgent, landsOn, response } from './helpers/fakes.ts';
 
 describe('runAsActor', () => {
   it('runs an anonymous journey with no provisioning and no login', async () => {
