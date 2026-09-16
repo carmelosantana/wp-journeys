@@ -12,7 +12,7 @@
  *
  * Needs a live target and a wp-cli for it:
  *   set -a; . ./.env; set +a
- *   WPJ_WP_CLI="node /path/to/wph.js wp wpjtest --" pnpm e2e
+ *   WPJ_WP="node /path/to/wph.js wp wpjtest --" pnpm e2e
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -44,10 +44,12 @@ const agent = createAgentClient(cfg.baseUrl, cfg.secret);
 const execFileAsync = promisify(execFile);
 
 /**
- * The wp-cli for the target site. There is no portable way to find one, so without it these
- * proofs SKIP loudly rather than quietly passing — a skip is visible; a silent pass is not.
+ * The wp-cli for the target site, under the runner's own name for it. There is no portable way
+ * to find one, so without it these proofs FAIL (R101). They once skipped instead, and
+ * Playwright exits 0 on skips: a run with the variable missing reported 3 passed, 20 skipped and
+ * a green exit, having proved nothing about the conformance suite.
  */
-const WP_CLI = (process.env.WPJ_WP_CLI ?? '').split(' ').filter(Boolean);
+const WP_CLI = (process.env.WPJ_WP ?? '').split(' ').filter(Boolean);
 
 /** Run wp-cli, failing the test if it fails. */
 async function wp(...args: string[]): Promise<void> {
@@ -78,13 +80,13 @@ let baseline: Baseline;
 let delta: Surface;
 
 test.beforeAll(async () => {
-  test.skip(WP_CLI.length === 0, 'set WPJ_WP_CLI to a wp-cli invocation for the target site');
+  expect(WP_CLI.length, `set WPJ_WP to a wp-cli invocation for ${TARGET}, e.g. "node /path/to/wph.js wp ${TARGET} --"`).toBeGreaterThan(0);
   test.setTimeout(240_000);
 
   // Structural rather than conventional: these proofs uninstall a plugin and delete a cron
-  // event, and only wpjtest may be mutated. Trusting whatever WPJ_WP_CLI happens to name would
+  // event, and only wpjtest may be mutated. Trusting whatever WPJ_WP happens to name would
   // let one mistyped environment variable run all of that against a real site.
-  expect(WP_CLI, `WPJ_WP_CLI must target ${TARGET}`).toContain(TARGET);
+  expect(WP_CLI, `WPJ_WP must target ${TARGET}`).toContain(TARGET);
   expect(cfg.baseUrl, `WPJ_BASE_URL must target ${TARGET}`).toContain(TARGET);
 
   // Start from a site the fixture has never been activated on (R7a): uninstall removes the

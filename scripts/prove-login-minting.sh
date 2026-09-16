@@ -8,14 +8,15 @@
 # user is never adopted) are proven with. Re-run it after any change to actors.php.
 #
 #   ./scripts/prove-login-minting.sh
-#   WPJ_WP_CLI="node /path/to/wph.js wp wpjtest" ./scripts/prove-login-minting.sh   # + R36
+#   WPJ_WP="node /path/to/wph.js wp wpjtest --" ./scripts/prove-login-minting.sh
 #
 # It reads WPJ_BASE_URL and WPJ_AGENT_SECRET from .env, prints PASS/FAIL/SKIP per assertion,
-# and exits non-zero if anything failed. It never prints the secret, a token or a cookie:
+# and exits non-zero if anything failed OR SKIPPED. It never prints the secret, a token or a cookie:
 # minted URLs are redacted, and jars are counted, never shown.
 #
 # The forged-user checks need wp-cli against the target site, which this script has no
-# portable way to find. Without WPJ_WP_CLI they SKIP loudly rather than quietly passing.
+# portable way to find. Without WPJ_WP (the runner's own name for it) they are reported as SKIP,
+# and the run exits non-zero: a skipped proof proved nothing (R101).
 
 set -u -o pipefail
 
@@ -58,7 +59,7 @@ user_id() { sed -E 's/.*"userId":([0-9]+).*/\1/'; }
 # WordPress escapes the slashes in JSON; nothing else in the URL carries a backslash.
 minted_url() { sed -E 's/.*"url":"([^"]+)".*/\1/' | tr -d '\\'; }
 
-WP="${WPJ_WP_CLI:-}"
+WP="${WPJ_WP:-}"
 wp_cli() { $WP "$@" 2>/dev/null; }
 
 echo "== target: $WPJ_BASE_URL"
@@ -125,7 +126,7 @@ echo
 echo "-- 3. R36: a forged user with the right login and mail but no mark is refused"
 if [ -z "$WP" ]; then
   skip "a forged user is refused by ensureActor and mintLogin" \
-    "set WPJ_WP_CLI to a wp-cli invocation for this site, e.g. WPJ_WP_CLI=\"wp --path=/var/www/html\""
+    "set WPJ_WP to a wp-cli invocation for this site, e.g. WPJ_WP=\"wp --path=/var/www/html\""
 else
   wp_cli user delete wpj_contributor --yes >/dev/null
   # Exactly what a visitor could register for themselves on a site with open registration.
@@ -134,7 +135,7 @@ else
   forged_id="$(wp_cli user get wpj_contributor --field=ID)"
 
   case "$forged_id" in
-    ''|*[!0-9]*) skip "a forged user is refused" "could not create one through WPJ_WP_CLI" ;;
+    ''|*[!0-9]*) skip "a forged user is refused" "could not create one through WPJ_WP" ;;
     *)
       has "ensureActor refuses a user it did not create" \
         '"wpj_actor_conflict"' "$(ensure contributor)"
@@ -170,7 +171,7 @@ echo
 
 echo "-- 5. an actor whose role drifted is put back"
 if [ -z "$WP" ]; then
-  skip "a drifted role is restored by ensureActor" "set WPJ_WP_CLI to a wp-cli invocation for this site"
+  skip "a drifted role is restored by ensureActor" "set WPJ_WP to a wp-cli invocation for this site"
 else
   wp_cli user set-role wpj_editor subscriber >/dev/null
   is "precondition: the actor's role was changed out from under the runner" \
@@ -187,4 +188,8 @@ has "the debug.log delta is empty" '"lines":[]' "$DELTA"
 echo
 
 printf '%s passed, %s failed, %s skipped\n' "$PASS" "$FAIL" "$SKIPPED"
-[ "$FAIL" -eq 0 ]
+[ "$FAIL" -eq 0 ] || exit 1
+if [ "$SKIPPED" -gt 0 ]; then
+  echo "NOT PROVEN: $SKIPPED check(s) skipped, and a skipped check proved nothing" >&2
+  exit 1
+fi
