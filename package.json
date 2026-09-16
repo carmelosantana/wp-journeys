@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test:php": "php tests/php/guard.test.php && php tests/php/discovery.test.php && php tests/php/snapshot.test.php && php tests/php/logtail.test.php && php tests/php/actors.test.php",
     "check": "pnpm typecheck && pnpm test && pnpm test:php",
-    "browser": "playwright install chromium"
+    "browser": "playwright install chromium",
+    "e2e": "playwright test"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
