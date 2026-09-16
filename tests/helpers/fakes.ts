@@ -41,6 +41,8 @@ export class FakePage {
   /** Every key the journey pressed, in order. */
   readonly keys: string[] = [];
   readonly keyboard = { press: async (key: string): Promise<void> => { this.keys.push(key); } };
+  /** Every selector the journey clicked, in order. */
+  readonly clicks: string[] = [];
   private readonly handlers: Record<string, Array<(arg: never) => unknown>> = {};
 
   on(event: string, handler: (arg: never) => unknown): void {
@@ -69,6 +71,10 @@ export class FakePage {
 
   async content(): Promise<string> {
     return this.body;
+  }
+
+  async click(selector: string): Promise<void> {
+    this.clicks.push(selector);
   }
 
   async fill(selector: string, value: string): Promise<void> {

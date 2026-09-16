@@ -174,6 +174,30 @@ describe('parseManifest', () => {
       expect(() => parseManifest(bad, 'f.json')).toThrow(/journey "s": settings\[0\]\.readBack must be a non-empty string/);
     });
 
+    it('accepts an optional submit selector (first contact: Enter cannot submit a <textarea>)', () => {
+      const manifest = parseManifest(withJourney({
+        name: 's', actor: 'administrator', surface: 'both',
+        settings: [{ url: '/wp-admin/x', field: '#t', value: 'v', readBack: '/', submit: '#submit' }],
+      }), 'f.json');
+      expect(manifest.journeys[0]?.settings?.[0]?.submit).toBe('#submit');
+    });
+
+    it('rejects an empty submit selector rather than falling back to Enter', () => {
+      const bad = withJourney({
+        name: 's', actor: 'administrator', surface: 'both',
+        settings: [{ url: '/wp-admin/x', field: '#t', value: 'v', readBack: '/', submit: '' }],
+      });
+      expect(() => parseManifest(bad, 'f.json')).toThrow(/journey "s": settings\[0\]\.submit must be a non-empty string/);
+    });
+
+    it('leaves submit absent when the author did not write one', () => {
+      const manifest = parseManifest(withJourney({
+        name: 's', actor: 'administrator', surface: 'both',
+        settings: [{ url: '/wp-admin/x', field: '#t', value: 'v', readBack: '/' }],
+      }), 'f.json');
+      expect(manifest.journeys[0]?.settings?.[0]).not.toHaveProperty('submit');
+    });
+
     it('rejects a setting that is not an object', () => {
       const bad = withJourney({ name: 's', actor: 'administrator', surface: 'both', settings: ['x'] });
       expect(() => parseManifest(bad, 'f.json')).toThrow(/journey "s": settings\[0\] is not an object/);
@@ -391,6 +415,35 @@ describe('interpret', () => {
       expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, '/', SCREEN, '/']);
       expect(page.fills).toEqual([['#acme_title', WRITTEN]]);
       expect(page.keys).toEqual(['Enter']);
+    });
+
+    it('clicks the declared submit control ONCE instead of pressing Enter', async () => {
+      const { page, run } = arrange(
+        { ...journey, settings: [{ ...setting, submit: '#submit' }] }, undefined, nonce,
+      );
+      page.navigations = [
+        ADMIN_LANDING, CONTROL,
+        landsOn('https://s.test/'), landsOn(`https://s.test${SCREEN}`),
+        (url) => { page.text = `Site title: ${WRITTEN}`; return response(200, url); },
+      ];
+
+      const result = await run();
+
+      expect(result.findings).toEqual([]);
+      expect(page.clicks).toEqual(['#submit']);
+      expect(page.keys).toEqual([]);
+    });
+
+    it('names the declared submit control, not Enter, when the value never reached the read-back', async () => {
+      const { page, run } = arrange(
+        { ...journey, settings: [{ ...setting, submit: '#submit' }] }, undefined, nonce,
+      );
+      page.navigations = [ADMIN_LANDING, CONTROL];
+
+      const result = await run();
+
+      expect(result.findings[0]?.text).toContain('clicking #submit');
+      expect(result.findings[0]?.text).not.toContain('Enter submits');
     });
 
     it('fails when the save answered cleanly but the value never reached the read-back URL', async () => {

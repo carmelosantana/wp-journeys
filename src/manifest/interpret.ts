@@ -211,7 +211,8 @@ function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => st
           await sentinel.visit(page, setting.url);
           await page.fill(setting.field, written);
           // The submit is NEVER retried — a retried submit writes twice.
-          await page.keyboard.press('Enter');
+          if (setting.submit !== undefined) await page.click(setting.submit);
+          else await page.keyboard.press('Enter');
           await page.waitForLoadState('networkidle');
 
           // Present AFTER. This is the assertion the whole entry exists for.
@@ -221,7 +222,10 @@ function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => st
               `read-back failed for "${entry.name}": wrote ${JSON.stringify(written)} to ${setting.field} `
                 + `on ${setting.url}, but it never appeared at ${setting.readBack}. Either the save was refused — a `
                 + 'validation or capability failure answers with a redirect back to the form, not an error — or the '
-                + 'submit never happened: Enter submits an <input> inside a <form>, not a <textarea> or a field without one.',
+                + (setting.submit !== undefined
+                  ? `submit never happened: clicking ${setting.submit} did not post the form.`
+                  : 'submit never happened: Enter submits an <input> inside a <form>, not a <textarea> or a field '
+                    + 'without one; name the form\'s submit control in "submit".'),
             );
           }
         }

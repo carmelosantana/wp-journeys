@@ -30,6 +30,12 @@ export interface ManifestSetting {
   value: string;
   /** A frontend URL where the written value must be absent before, and visible after. */
   readBack: string;
+  /**
+   * A CSS selector for the control that submits the form, clicked ONCE. Absent means press
+   * Enter in the field, which submits an `<input>` inside a `<form>` and nothing else — first
+   * contact's one visible setting was a `<textarea>`, where Enter only adds a newline.
+   */
+  submit?: string;
 }
 
 export interface ManifestJourney {
@@ -62,6 +68,7 @@ const GATE_KEYS = ['screen'];
 const JOURNEY_KEYS = ['name', 'actor', 'surface', 'screens', 'settings', 'shortcodes', 'module'];
 const SCREEN_KEYS = ['url', 'allow', 'deny'];
 const SETTING_KEYS = ['url', 'field', 'value', 'readBack'];
+const OPTIONAL_SETTING_KEYS = ['submit'];
 
 type Fail = (message: string) => never;
 
@@ -112,13 +119,17 @@ function parseScreen(raw: unknown, index: number, actor: Actor, fail: Fail): Man
 function parseSetting(raw: unknown, index: number, fail: Fail): ManifestSetting {
   const where = `settings[${index}]`;
   if (!isObject(raw)) return fail(`${where} is not an object`);
-  refuseUnknownKeys(raw, SETTING_KEYS, (message) => fail(`${where}: ${message}`));
+  refuseUnknownKeys(raw, [...SETTING_KEYS, ...OPTIONAL_SETTING_KEYS], (message) => fail(`${where}: ${message}`));
   for (const key of SETTING_KEYS) {
     if (!isNonEmptyString(raw[key])) fail(`${where}.${key} must be a non-empty string`);
   }
-  return {
+  // Present-but-empty is refused, not read as "use Enter": the author wrote the key.
+  if (raw.submit !== undefined && !isNonEmptyString(raw.submit)) fail(`${where}.submit must be a non-empty string`);
+  const setting: ManifestSetting = {
     url: raw.url as string, field: raw.field as string, value: raw.value as string, readBack: raw.readBack as string,
   };
+  if (raw.submit !== undefined) setting.submit = raw.submit as string;
+  return setting;
 }
 
 /** A step list is either absent or a NON-EMPTY array: `[]` declares nothing, and must say so. */
