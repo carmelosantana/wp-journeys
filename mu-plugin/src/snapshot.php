@@ -14,11 +14,13 @@ function wpj_snapshot() {
 
     sort($options); sort($tables); sort($meta_keys);
 
+    $cron = wpj_snapshot_cron_hooks(_get_cron_array());
     return array(
         'options' => $options,
         'tables' => $tables,
-        'cron' => wpj_snapshot_cron_hooks(_get_cron_array()),
+        'cron' => $cron,
         'userMeta' => $meta_keys,
+        'cronHandled' => wpj_snapshot_handled_hooks($cron, 'has_action'),
     );
 }
 
@@ -40,4 +42,26 @@ function wpj_snapshot_cron_hooks($cron) {
     $hooks = array_map('strval', array_keys($hooks));
     sort($hooks);
     return $hooks;
+}
+
+/**
+ * The scheduled hooks some code loaded in THIS request still answers.
+ *
+ * The runner's origin re-check for a cron event that appeared during a run: after the uninstall
+ * the plugin under test is not loaded, so a hook with a callback belongs to core or to another
+ * active plugin. Core schedules some of its own events lazily, and without this a run whose
+ * baseline predated that write blamed it on the plugin under test.
+ *
+ * @param string[] $hooks       hook names, as wpj_snapshot_cron_hooks() returns them
+ * @param callable $has_action  function (string $hook): bool|int — has_action in production
+ * @return string[]
+ */
+function wpj_snapshot_handled_hooks(array $hooks, $has_action) {
+    $handled = array();
+    foreach ($hooks as $hook) {
+        if (call_user_func($has_action, $hook)) {
+            $handled[] = $hook;
+        }
+    }
+    return $handled;
 }

@@ -48,4 +48,30 @@ describe('orphansAfterUninstall', () => {
     };
     expect(orphansAfterUninstall(before, after).options).toEqual([]);
   });
+
+  describe('a cron hook scheduled lazily by code that is still loaded (Task 11/12 carry-forward)', () => {
+    // Observed on wpjtest: core schedules wp_delete_temp_updater_backups lazily, so a run whose
+    // baseline predates that write blamed it on the plugin under test. After the uninstall the
+    // plugin is not loaded, so a hook that still has a callback belongs to core or another
+    // active plugin — never to the plugin under test.
+    const after: Snapshot = {
+      ...before,
+      cron: ['wp_version_check', 'wp_delete_temp_updater_backups', 'acme_daily_sync'],
+      cronHandled: ['wp_version_check', 'wp_delete_temp_updater_backups'],
+    };
+
+    it('is not the plugin\'s orphan when a callback still answers it after the uninstall', () => {
+      expect(orphansAfterUninstall(before, after).cron).toEqual(['acme_daily_sync']);
+    });
+
+    it('still reports an added hook nothing answers — the uninstalled plugin was its only handler', () => {
+      expect(hasOrphans(orphansAfterUninstall(before, after))).toBe(true);
+    });
+
+    it('excludes nothing when the agent did not say which hooks are handled — failing loud, not quiet', () => {
+      const { cronHandled: _unused, ...unsaid } = after;
+      expect(orphansAfterUninstall(before, unsaid).cron)
+        .toEqual(['wp_delete_temp_updater_backups', 'acme_daily_sync']);
+    });
+  });
 });

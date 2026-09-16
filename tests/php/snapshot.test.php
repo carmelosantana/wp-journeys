@@ -25,4 +25,14 @@ wpj_assert(
 wpj_assert('an empty cron array has no hooks', array(), wpj_snapshot_cron_hooks(array()));
 wpj_assert('a missing cron option (false) has no hooks, not a warning', array(), wpj_snapshot_cron_hooks(false));
 
+// The origin re-check: which scheduled hooks some loaded code still answers. Asked of an
+// injected predicate so this stays pure; the live call passes has_action.
+$handled = function ($hook) { return $hook === 'wp_version_check'; };
+wpj_assert(
+    'keeps only the hooks the predicate says are handled, in order',
+    array('wp_version_check'),
+    wpj_snapshot_handled_hooks(array('acme_daily', 'acme_sync', 'wp_version_check'), $handled)
+);
+wpj_assert('no hooks, none handled', array(), wpj_snapshot_handled_hooks(array(), $handled));
+
 wpj_assert_exit();
