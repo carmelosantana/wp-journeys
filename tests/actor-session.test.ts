@@ -105,8 +105,10 @@ describe('openActorSession', () => {
 
     expect(opened.ok).toBe(false);
     expect(!opened.ok && opened.findings).toMatchObject([
-      { kind: 'assertion', text: expect.stringMatching(/sentinel could not be installed.*agent unreachable/) },
+      { kind: 'assertion', text: expect.stringMatching(/sentinel could not be installed.*agent unreachable.*nothing was run/) },
     ]);
+    // Said the same way for a login_as session as for a journey (M8).
+    expect(JSON.stringify(!opened.ok && opened.findings)).not.toMatch(/journey/);
     // Nothing is authenticated for a page nobody is watching.
     expect(calls.filter((c) => c.startsWith('mintLogin'))).toEqual([]);
     expect(browser.closed).toEqual([true]);

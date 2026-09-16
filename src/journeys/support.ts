@@ -217,7 +217,7 @@ export async function openActorSession(
     // With no sentinel there are no signals at all, so nothing is run: a page driven with
     // nothing watching it would report clean no matter what it hit.
     return refuse([assertionFinding(
-      `the sentinel could not be installed (${messageOf(error)}) — this journey was not run`,
+      `the sentinel could not be installed (${messageOf(error)}) — nothing was run`,
     )]);
   }
   const drain = () => drainOrSaySo(sentinel);
