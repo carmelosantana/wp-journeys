@@ -24,8 +24,11 @@ export interface Expectation {
  * this runner does exactly that DURING a run (the baseline capture toggles the plugin, and the
  * lifecycle journey uninstalls it with a page open). Flagging it would make the suite fail at
  * random, and a suite that fails at random stops being read.
+ *
+ * Exported because it is also the sentinel's retry predicate: "worth one more navigation" and
+ * "not worth reporting" are the same set, and two copies of it would drift apart.
  */
-const BENIGN_NETWORK = /net::(ERR_NETWORK_CHANGED|ERR_NETWORK_IO_SUSPENDED|ERR_INTERNET_DISCONNECTED)/;
+export const BENIGN_NETWORK = /net::(ERR_NETWORK_CHANGED|ERR_NETWORK_IO_SUSPENDED|ERR_INTERNET_DISCONNECTED)/;
 
 /**
  * Subresource policy: lenient, and deliberately expectation-free (R1).
