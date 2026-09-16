@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { Actor } from '../src/actors/roles.ts';
+import type { Surface } from '../src/discovery/types.ts';
 import type { JourneyResult } from '../src/journeys/index.ts';
 import { exitCodeFor, renderSummary } from '../src/report/summary.ts';
 
@@ -77,6 +78,47 @@ describe('renderSummary', () => {
 
     expect(out).toContain('admin: 0 of 2');
     expect(out).toContain('frontend: 0 of 1');
+  });
+
+  describe('the discovered surface (first contact: an ok sweep did not say what it swept)', () => {
+    const surface: Surface = {
+      screens: [
+        { slug: 'acme', url: '/wp-admin/admin.php?page=acme', capability: 'edit_posts', title: 'Acme', parent: null },
+        { slug: 'acme-settings', url: '/wp-admin/admin.php?page=acme-settings', capability: 'manage_options', title: 'Settings', parent: 'acme' },
+      ],
+      blocks: ['acme/hello'],
+      shortcodes: ['acme', 'acme_legacy'],
+      restRoutes: [
+        { route: '/acme/v1/chat', methods: ['POST'], guarded: true },
+        { route: '/acme/v1/models', methods: ['GET'], guarded: true },
+      ],
+      caps: { administrator: ['manage_options'] },
+    };
+
+    it('names every screen, shortcode and block the run attributed to the plugin, between the header and the journeys', () => {
+      const lines = renderSummary([pass], surface).split('\n');
+
+      expect(lines.slice(1, 7)).toEqual([
+        '  discovered: 2 admin screens, 2 shortcodes, 1 block, 2 REST routes',
+        '    screen    /wp-admin/admin.php?page=acme (edit_posts)',
+        '    screen    /wp-admin/admin.php?page=acme-settings (manage_options)',
+        '    shortcode [acme]',
+        '    shortcode [acme_legacy]',
+        '    block     acme/hello',
+      ]);
+      expect(lines[7]).toContain('frontend-renders');
+    });
+
+    it('says so when the plugin added nothing, rather than printing an empty block', () => {
+      const none: Surface = { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} };
+
+      expect(renderSummary([pass], none).split('\n')[1])
+        .toBe('  discovered: 0 admin screens, 0 shortcodes, 0 blocks, 0 REST routes');
+    });
+
+    it('leaves the summary exactly as it was when no surface is given', () => {
+      expect(renderSummary([pass, fail])).not.toContain('discovered:');
+    });
   });
 
   it('is deterministic for the same input', () => {

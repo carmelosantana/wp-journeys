@@ -294,6 +294,6 @@ export async function main(
     await browser.close();
   }
 
-  process.stdout.write(`${renderSummary(results)}\n`);
+  process.stdout.write(`${renderSummary(results, delta)}\n`);
   return exitCodeFor(results);
 }

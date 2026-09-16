@@ -16,6 +16,7 @@
  * the defect the global constraints forbid: a journey that skipped AND lost a signal would
  * print as a benign skip instead of the failure it is.
  */
+import type { Surface } from '../discovery/types.ts';
 import { outcomeOf } from '../journeys/index.ts';
 import type { JourneyResult, Outcome, SurfaceAxis } from '../journeys/index.ts';
 import type { Finding } from '../sentinel/phplog.ts';
@@ -98,7 +99,28 @@ function coverage(
 const EMPTY_RUN =
   '  no journeys ran — a suite that registers nothing asserts nothing, and must not report success';
 
-export function renderSummary(results: JourneyResult[]): string {
+/**
+ * What the run attributed to the plugin, listed (first contact). Without it an `ok` admin sweep
+ * says nothing about what it swept: a discovery that found one screen of three reads exactly
+ * like one that found all three. REST routes are counted, not listed — no journey drives them
+ * yet, and a real plugin registers dozens.
+ */
+function renderSurface(surface: Surface): string[] {
+  const lines = [
+    `  discovered: ${plural(surface.screens.length, 'admin screen')}, ${plural(surface.shortcodes.length, 'shortcode')}`
+      + `, ${plural(surface.blocks.length, 'block')}, ${plural(surface.restRoutes.length, 'REST route')}`,
+  ];
+  for (const screen of surface.screens) lines.push(`    screen    ${screen.url} (${screen.capability})`);
+  for (const tag of surface.shortcodes) lines.push(`    shortcode [${tag}]`);
+  for (const block of surface.blocks) lines.push(`    block     ${block}`);
+  return lines;
+}
+
+/**
+ * @param surface what the run attributed to the plugin under test; listed under the header
+ *   when given
+ */
+export function renderSummary(results: JourneyResult[], surface?: Surface): string {
   const outcomes = results.map(outcomeOf);
   const failed = outcomes.filter((o) => o === 'fail').length;
   const skipped = outcomes.filter((o) => o === 'skip').length;
@@ -110,8 +132,9 @@ export function renderSummary(results: JourneyResult[]): string {
     ` — coverage admin: ${surfaces.admin.exercised} of ${surfaces.admin.total}` +
     `, frontend: ${surfaces.frontend.exercised} of ${surfaces.frontend.total}`;
 
-  if (results.length === 0) return [header, EMPTY_RUN].join('\n');
-  return [header, ...results.map(renderJourney)].join('\n');
+  const discovered = surface ? renderSurface(surface) : [];
+  if (results.length === 0) return [header, ...discovered, EMPTY_RUN].join('\n');
+  return [header, ...discovered, ...results.map(renderJourney)].join('\n');
 }
 
 /**
