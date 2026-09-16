@@ -148,6 +148,24 @@ describe('the wpj entry point', { timeout: SPAWN_TIMEOUT_MS }, () => {
     expect(result.stdout + result.stderr).not.toContain(secret);
   });
 
+  it('redacts a login token from a fatal error on its way to stderr (R95e)', () => {
+    // The manifest loader's refusal quotes the directory it was given — here, one carrying a
+    // token. It is refused before anything touches the site.
+    const result = spawnSync(process.execPath, [wpj, 'run', '--plugin', 'acme'], {
+      encoding: 'utf8',
+      env: {
+        PATH: process.env.PATH ?? '', WPJ_BASE_URL: 'https://s.test/', WPJ_AGENT_SECRET: 'x'.repeat(16),
+        WPJ_WP: 'false', WPJ_MANIFEST_DIR: '/nonexistent/?wpj_login=TOK-fatal-123',
+      },
+    });
+
+    expect(result.status).toBe(1);
+    // The value runs to the next delimiter, so the `:` after it goes too.
+    expect(result.stderr).toMatch(/^\/nonexistent\/\?wpj_login=<REDACTED>/);
+    expect(result.stderr).toContain('manifest directory does not exist');
+    expect(result.stdout + result.stderr).not.toContain('TOK-fatal-123');
+  });
+
   it('names the environment variables without ever carrying a value for the secret', () => {
     const { stdout, stderr } = runCli([]);
     const all = stdout + stderr;

@@ -10,6 +10,7 @@
  */
 import { redactSecret } from '../src/errors.ts';
 import { main } from '../src/runner/cli.ts';
+import { redactLoginToken } from '../src/sentinel/classify.ts';
 
 main().then(
   (code) => {
@@ -18,9 +19,9 @@ main().then(
   (error) => {
     // A failure before any journey ran: bad config, an unreachable agent, a baseline that could
     // not be captured. It is a failed run, not a clean one.
-    // The secret never reaches stderr, even if a message ends up quoting it (M1).
+    // Neither the secret nor a login token reaches stderr, even if a message quotes one (M1, R95e).
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${redactSecret(message, process.env.WPJ_AGENT_SECRET)}\n`);
+    process.stderr.write(`${redactLoginToken(redactSecret(message, process.env.WPJ_AGENT_SECRET))}\n`);
     process.exit(1);
   },
 );
