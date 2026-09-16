@@ -222,6 +222,14 @@ describe('parseManifest', () => {
       expect(() => parseManifest(bad, 'f.json')).toThrow(/journey "s": settings\[0\]\.submit must be a non-empty string/);
     });
 
+    it('rejects a whitespace-only submit selector, which would click nothing identifiable', () => {
+      const bad = withJourney({
+        name: 's', actor: 'administrator', surface: 'both',
+        settings: [{ url: '/wp-admin/x', field: '#t', value: 'v', readBack: '/', submit: '   ' }],
+      });
+      expect(() => parseManifest(bad, 'f.json')).toThrow(/journey "s": settings\[0\]\.submit must be a non-empty string/);
+    });
+
     it('leaves submit absent when the author did not write one', () => {
       const manifest = parseManifest(withJourney({
         name: 's', actor: 'administrator', surface: 'both',

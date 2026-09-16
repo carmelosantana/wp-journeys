@@ -180,7 +180,9 @@ const BODY_DIAGNOSTIC = new RegExp(
     // loses its leading newline to the HTML parser and lands right after an IMPLIED <body>,
     // which a later <body class=...> lends its attributes to; `^` alone never sees it, and a
     // notice printed on plugins_loaded is exactly that shape (first contact, Alpaca Bot).
-    `|(?:^|(?<=<body(?:\\s[^>]*)?>))(?:${SEVERITY}): [\\s\\S]*? in (?:\\/[^\\s]+|Unknown|Command line code) on line \\d+` +
+    // ONE line: PHP writes this form on a single line, and a lazy match allowed to cross lines
+    // would join a page that merely opens with "Warning: …" to any later "in <x> on line <n>".
+    `|(?:^|(?<=<body(?:\\s[^>]*)?>))(?:${SEVERITY}): [^\\n]*? in (?:\\/[^\\s]+|Unknown|Command line code) on line \\d+` +
     // To end of line, not just the `Uncaught ` prefix: the exception class and message are the
     // only thing distinguishing one uncaught fatal from another (R63).
     `|(?:${SEVERITY}): Uncaught [^\\n]*`,

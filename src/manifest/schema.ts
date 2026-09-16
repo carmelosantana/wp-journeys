@@ -134,7 +134,9 @@ function parseSetting(raw: unknown, index: number, fail: Fail): ManifestSetting 
     if (!isNonEmptyString(raw[key])) fail(`${where}.${key} must be a non-empty string`);
   }
   // Present-but-empty is refused, not read as "use Enter": the author wrote the key.
-  if (raw.submit !== undefined && !isNonEmptyString(raw.submit)) fail(`${where}.submit must be a non-empty string`);
+  if (raw.submit !== undefined && !(typeof raw.submit === 'string' && raw.submit.trim() !== '')) {
+    fail(`${where}.submit must be a non-empty string`);
+  }
   const setting: ManifestSetting = {
     url: raw.url as string, field: raw.field as string, value: raw.value as string, readBack: raw.readBack as string,
   };

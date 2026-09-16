@@ -207,6 +207,16 @@ describe('scanBody', () => {
       expect(scanBody(dom, 'https://s.test/')).toHaveLength(1);
     });
 
+    it('does not run from body-first prose to an unrelated "in <path> on line <n>" much later (scope of the lazy match)', () => {
+      // PHP writes the plain-text form on ONE line. A match allowed to span lines would join a
+      // page that opens with "Warning: …" to any later text that happens to end the right way.
+      const dom = '<html><head></head><body>Warning: this store closes early on Fridays.\n'
+        + '<main>\n<p>Opening hours</p>\n'.repeat(20)
+        + '<p>The recipe is filed in /recipes/bread.txt on line 3 of the index.</p></main></body></html>';
+
+      expect(scanBody(dom, 'https://s.test/')).toEqual([]);
+    });
+
     it('still refuses prose that merely starts with a severity word after a tag', () => {
       // The adjacency rule is what keeps this safe: no "in <path> on line <n>" follows.
       const dom = '<html><head></head><body>Warning: this store closes early on Fridays. See the note on line 3.</body></html>';
