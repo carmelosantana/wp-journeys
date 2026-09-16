@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: wp-journeys fixture
- * Description: Test fixture with a KNOWN surface, so discovery's plugin attribution can be proven. It registers exactly: admin pages wpj-fixture (top level), wpj-fixture-settings (under it), wpj-fixture-options (under core Settings), wpj-fixture-admin-only (top level, registered only when is_admin()), wpj-fixture/wpj-fixture.php (top level, registered with __FILE__ as its slug) and wpj-fixture-file-child (under that); shortcode wpj_fixture; dynamic block wpj-fixture/hello; REST route wpj-fixture/v1/ping. It also turns on custom_menu_order with a menu_order filter, which adds no surface but exercises core's sort_menu(). Add nothing else here: the live proof expects exactly these.
+ * Description: Test fixture with a KNOWN surface, so discovery's plugin attribution can be proven. It registers exactly: admin pages wpj-fixture (top level), wpj-fixture-settings (under it), wpj-fixture-options (under core Settings), wpj-fixture-admin-only (top level, registered only when is_admin()), wpj-fixture/wpj-fixture.php (top level, registered with __FILE__ as its slug), wpj-fixture-file-child (under that), wpj-fixture-container (top level, registered with NO callback, so it is a "container" WordPress links at its first submenu) and wpj-fixture-container-home (under that container); shortcode wpj_fixture; dynamic block wpj-fixture/hello; REST route wpj-fixture/v1/ping. It also turns on custom_menu_order with a menu_order filter, which adds no surface but exercises core's sort_menu(). Add nothing else here: the live proof expects exactly these.
  * Version: 0.1.0
  * License: MIT
  *
@@ -51,6 +51,21 @@ function wpj_fixture_admin_menu() {
     // so the slug is "wpj-fixture/wpj-fixture.php", served at admin.php?page=<that slug>.
     add_menu_page('WPJ Fixture File', 'WPJ Fixture File', 'manage_options', __FILE__, 'wpj_fixture_render_file');
     add_submenu_page(__FILE__, 'WPJ Fixture File Child', 'File Child', 'manage_options', 'wpj-fixture-file-child', 'wpj_fixture_render_file_child');
+    // A CONTAINER top-level menu (R28): registered with NO callback, so nothing serves
+    // /wp-admin/wpj-fixture-container and nothing serves admin.php?page=wpj-fixture-container
+    // either. WordPress's own menu links such an item at its FIRST submenu's URL. A projection
+    // that sends it to its own slug reports a 404 against the plugin under test.
+    add_menu_page('WPJ Fixture Container', 'WPJ Fixture Container', 'manage_options', 'wpj-fixture-container');
+    add_submenu_page('wpj-fixture-container', 'WPJ Fixture Container Home', 'Home', 'manage_options', 'wpj-fixture-container-home', 'wpj_fixture_render_container_home');
+    // add_submenu_page() links the parent back to itself as the FIRST submenu row. Dropping
+    // that row is the common way plugins avoid a duplicated first item, and it is what leaves
+    // the container in the shape R28 is about: a top-level whose first submenu carries a
+    // DIFFERENT slug. WordPress then links the menu at that submenu instead.
+    remove_submenu_page('wpj-fixture-container', 'wpj-fixture-container');
+}
+
+function wpj_fixture_render_container_home() {
+    echo '<div class="wrap"><h1>WPJ Fixture Container Home</h1></div>';
 }
 
 // Opt in to custom menu ordering, as WooCommerce and admin-menu editors do, so core's

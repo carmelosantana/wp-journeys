@@ -10,7 +10,10 @@ const raw: RawRegistries = {
     ['Acme', 'manage_options', 'acme'],
   ],
   submenu: {
-    acme: [['Settings', 'manage_options', 'acme-settings']],
+    // add_submenu_page() links the parent back to itself as the FIRST submenu row, so every
+    // real $submenu carries one. These fixtures carry it too, or they would model a shape
+    // WordPress does not actually produce.
+    acme: [['Acme', 'manage_options', 'acme'], ['Settings', 'manage_options', 'acme-settings']],
   },
   blocks: ['acme/hero', 'core/paragraph'],
   shortcodes: ['acme_list', 'gallery'],
@@ -72,7 +75,12 @@ describe('projectSurface', () => {
     const surface = projectSurface({
       ...raw,
       menu: [['Acme Items', 'edit_posts', 'edit.php?post_type=acme']],
-      submenu: { 'edit.php?post_type=acme': [['Add New', 'edit_posts', 'post-new.php?post_type=acme']] },
+      submenu: {
+        'edit.php?post_type=acme': [
+          ['All Items', 'edit_posts', 'edit.php?post_type=acme'],
+          ['Add New', 'edit_posts', 'post-new.php?post_type=acme'],
+        ],
+      },
     });
 
     expect(surface.screens.map((s) => s.url)).toEqual([
@@ -107,7 +115,12 @@ describe('projectSurface', () => {
     const surface = projectSurface({
       ...raw,
       menu: [['Acme Items', 'edit_posts', 'edit.php?post_type=acme']],
-      submenu: { 'edit.php?post_type=acme': [['Report', 'edit_posts', 'acme-report']] },
+      submenu: {
+        'edit.php?post_type=acme': [
+          ['All Items', 'edit_posts', 'edit.php?post_type=acme'],
+          ['Report', 'edit_posts', 'acme-report'],
+        ],
+      },
       pluginPages: ['acme-report'],
     });
 
@@ -136,7 +149,10 @@ describe('projectSurface', () => {
         ['Acme Items', 'edit_posts', 'edit.php?post_type=acme'],
       ],
       submenu: {
-        'myplugin/myplugin.php': [['Child', 'manage_options', 'myplugin-child']],
+        'myplugin/myplugin.php': [
+          ['File Plugin', 'manage_options', 'myplugin/myplugin.php'],
+          ['Child', 'manage_options', 'myplugin-child'],
+        ],
         acme: [
           ['Reports', 'manage_options', 'acme/reports.php'],
           ['Items', 'edit_posts', 'edit.php?post_type=acme_item'],
@@ -168,6 +184,45 @@ describe('projectSurface', () => {
     });
     it('a core screen with a query is its own path', () => {
       expect(urlOf('edit.php?post_type=acme')).toBe('/wp-admin/edit.php?post_type=acme');
+    });
+  });
+
+  describe('a container menu takes its first submenu’s URL (R28)', () => {
+    // A "container" is a top-level menu registered with no callback of its own. Nothing serves
+    // /wp-admin/<slug> for it, so projecting it there reports a 404 against the plugin under
+    // test. WordPress promotes such a menu to its first submenu when that submenu carries a
+    // DIFFERENT slug — wp-admin/includes/menu.php's `$new_parent !== $old_parent` — and its
+    // rendered menu links the item there. Verified live on WP 7.1: the admin menu links the
+    // fixture's container at admin.php?page=wpj-fixture-container-home, which answers 200,
+    // while /wp-admin/wpj-fixture-container answers 404.
+    const container: RawRegistries = {
+      ...raw,
+      menu: [['Acme', 'manage_options', 'acme-container']],
+      submenu: { 'acme-container': [['Home', 'manage_options', 'acme-home']] },
+      pluginPages: ['acme-home'],
+    };
+
+    it('sends the container to its first submenu, not to its own unserved slug', () => {
+      expect(projectSurface(container).screens[0]?.url).toBe('/wp-admin/admin.php?page=acme-home');
+    });
+
+    it('keeps the container’s own slug, capability and title — only the URL moves', () => {
+      expect(projectSurface(container).screens[0]).toEqual({
+        slug: 'acme-container', url: '/wp-admin/admin.php?page=acme-home',
+        capability: 'manage_options', title: 'Acme', parent: null,
+      });
+    });
+
+    it('leaves a top-level item with no submenus at its own URL', () => {
+      const alone = projectSurface({ ...container, submenu: {} });
+      expect(alone.screens[0]?.url).toBe('/wp-admin/acme-container');
+    });
+
+    it('leaves a top-level item whose first submenu links back to itself', () => {
+      // The mirror row add_submenu_page() creates. Core promotes nothing here, because the
+      // first submenu's slug IS the parent's, and neither does the projection.
+      expect(projectSurface(raw).screens.find((s) => s.slug === 'acme')?.url)
+        .toBe('/wp-admin/admin.php?page=acme');
     });
   });
 

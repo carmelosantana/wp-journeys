@@ -49,6 +49,40 @@ function urlFor(slug: string, parent: string | null, pluginPages: ReadonlySet<st
   return `/wp-admin/admin.php?page=${slug}`;
 }
 
+/**
+ * Where WordPress's own menu links a TOP-LEVEL item (R28).
+ *
+ * Core promotes a top-level menu to its first submenu whenever that submenu carries a
+ * DIFFERENT slug — `wp-admin/includes/menu.php`'s `$new_parent !== $old_parent`, which rewrites
+ * `$menu[$id][2]` — and wp-admin links the item there. A "container" menu, registered with
+ * `add_menu_page()` and no callback, has nothing serving its own slug at all, so projecting it
+ * there walks the sweep into a 404 and reports it as a defect of the plugin under test.
+ *
+ * Usually the first submenu is the mirror `add_submenu_page()` creates, whose slug IS the
+ * parent's. Core promotes nothing in that case, and neither does this — which is what keeps an
+ * ordinary plugin menu, and a custom post type's screens, at their own URLs.
+ *
+ * Only the URL moves. The screen keeps its own slug, capability and title, because that
+ * capability is what the permission matrix judges the actor against.
+ *
+ * Verified live on WP 7.1: the fixture's container is linked at
+ * `admin.php?page=wpj-fixture-container-home` (200), while `/wp-admin/wpj-fixture-container`
+ * answers 404 — and the raw `$menu` the agent dumps still carries the unpromoted slug, so the
+ * projection has to do this itself.
+ */
+function topLevelUrl(
+  slug: string, rows: readonly unknown[][], pluginPages: ReadonlySet<string>,
+): string {
+  const own = urlFor(slug, null, pluginPages);
+  for (const row of rows) {
+    const first = readRow(row);
+    // A separator is not a destination; keep looking for the row core would land on.
+    if (!first) continue;
+    return first.slug === slug ? own : urlFor(first.slug, slug, pluginPages);
+  }
+  return own;
+}
+
 export function projectSurface(raw: RawRegistries): Surface {
   const screens: AdminScreen[] = [];
   const pluginPages = new Set(raw.pluginPages);
@@ -56,8 +90,9 @@ export function projectSurface(raw: RawRegistries): Surface {
   for (const row of raw.menu) {
     const parsed = readRow(row);
     if (!parsed) continue;
-    screens.push({ ...parsed, url: urlFor(parsed.slug, null, pluginPages), parent: null });
-    for (const child of raw.submenu[parsed.slug] ?? []) {
+    const children = raw.submenu[parsed.slug] ?? [];
+    screens.push({ ...parsed, url: topLevelUrl(parsed.slug, children, pluginPages), parent: null });
+    for (const child of children) {
       const sub = readRow(child);
       // add_submenu_page() mirrors the parent into its own submenu as a link back to itself:
       // the same screen again, so projecting it would double every plugin's top-level page.
