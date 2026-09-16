@@ -19,6 +19,11 @@ function response(status: number, url: string): never {
   return { status: () => status, url: () => url } as never;
 }
 
+/** A navigation that settles on `url`: the mint 302s into wp-admin, so that is its landing. */
+function landsOn(url: string): () => never {
+  return () => response(200, url);
+}
+
 /** The slice of Playwright's Page the sentinel and the helper touch. */
 class FakePage {
   readonly gotos: string[] = [];
@@ -35,14 +40,20 @@ class FakePage {
     for (const handler of this.handlers[event] ?? []) void handler(arg as never);
   }
 
+  /** Where the page SETTLED, after redirects — how a login that failed becomes visible. */
+  current = 'https://s.test/';
+
   async goto(url: string): Promise<unknown> {
     this.gotos.push(url);
     const step = this.navigations.shift();
-    return step ? step(url) : response(200, url);
+    const landed = step ? step(url) : response(200, url);
+    const settled = landed as { url?: () => string } | null;
+    if (settled && typeof settled.url === 'function') this.current = settled.url();
+    return landed;
   }
 
   url(): string {
-    return 'https://s.test/';
+    return this.current;
   }
 
   async content(): Promise<string> {
@@ -140,6 +151,8 @@ describe('runAsActor', () => {
     const page = new FakePage();
     const browser = new FakeBrowser(page);
     const { agent, calls } = fakeAgent({ ensureActor: async () => ({ userId: 7 }) });
+    // The mint 302s into wp-admin; that landing is what says the session was established.
+    page.navigations = [landsOn('https://s.test/wp-admin/')];
 
     const result = await runAsActor(
       browser.asBrowser(), CFG, agent, 'admin-sweep', Actor.EDITOR, 'admin',
@@ -171,7 +184,67 @@ describe('runAsActor', () => {
 
     expect(result.findings).toMatchObject([
       { kind: 'response', text: expect.stringContaining('the actor is not authenticated') },
+      { kind: 'assertion', text: expect.stringContaining('could not authenticate as editor') },
     ]);
+  });
+
+  it('skips the body when the minted login never reached wp-admin (R50)', async () => {
+    // sentinel.visit RECORDS a bad landing and returns normally — it does not throw. So without
+    // an explicit check the body runs as an ANONYMOUS visitor under the named actor's label, and
+    // for a denial journey an unauthenticated body satisfies the expected denial for entirely
+    // the wrong reason.
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    const { agent } = fakeAgent();
+    page.navigations = [landsOn('https://s.test/wp-login.php?redirect_to=%2Fwp-admin%2F')];
+    let bodyRan = false;
+
+    const result = await runAsActor(
+      browser.asBrowser(), CFG, agent, 'admin-sweep', Actor.EDITOR, 'admin',
+      async () => { bodyRan = true; return 0; },
+    );
+
+    expect(bodyRan).toBe(false);
+    expect(result.findings.at(-1)).toMatchObject({
+      kind: 'assertion', text: expect.stringContaining('could not authenticate as editor'),
+    });
+  });
+
+  it('skips the body when the mint itself failed to serve, not only when it bounced to login', async () => {
+    // A 502 on the mint URL leaves the page ON the mint URL: not the login page, and not a
+    // session either. Checking only for wp-login.php would let the body run unauthenticated.
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    const { agent } = fakeAgent();
+    page.navigations = [() => response(502, 'https://s.test/?wpj_login=TOKEN')];
+    let bodyRan = false;
+
+    await runAsActor(
+      browser.asBrowser(), CFG, agent, 'admin-sweep', Actor.EDITOR, 'admin',
+      async () => { bodyRan = true; return 0; },
+    );
+
+    expect(bodyRan).toBe(false);
+  });
+
+  it('never lets a minted login token reach a finding (R51)', async () => {
+    // Findings go into JourneyResult, the run summary, and whatever CI keeps. A live token in
+    // there is a credential that outlives the run.
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    const { agent } = fakeAgent({
+      mintLogin: async () => ({ url: 'https://s.test/?wpj_login=SECRETTOKENabcdef0123456789abcd' }),
+    });
+    page.navigations = [() => response(502, 'https://s.test/?wpj_login=SECRETTOKENabcdef0123456789abcd')];
+
+    const result = await runAsActor(
+      browser.asBrowser(), CFG, agent, 'admin-sweep', Actor.EDITOR, 'admin',
+      async () => 0,
+    );
+
+    const serialised = JSON.stringify(result.findings);
+    expect(serialised).not.toContain('SECRETTOKEN');
+    expect(serialised).toContain('wpj_login=<REDACTED>');
   });
 
   it('records a thrown body as an assertion finding rather than aborting the run', async () => {

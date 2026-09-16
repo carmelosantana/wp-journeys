@@ -20,6 +20,8 @@ import type { Browser, Page } from '@playwright/test';
 import { isAnonymous, type Actor } from '../actors/roles.ts';
 import type { AgentClient } from '../agent/client.ts';
 import type { Config } from '../config.ts';
+import { messageOf } from '../errors.ts';
+import { redactLoginToken } from '../sentinel/classify.ts';
 import type { Finding } from '../sentinel/phplog.ts';
 import { installSentinel, type Sentinel } from '../sentinel/sentinel.ts';
 import type { JourneyResult, SurfaceAxis } from './index.ts';
@@ -27,15 +29,33 @@ import type { JourneyResult, SurfaceAxis } from './index.ts';
 /** What a journey actually does, returning how many entities it created. */
 export type JourneyBody = (page: Page, sentinel: Sentinel) => Promise<number>;
 
-/** A thrown value's message, never empty — an empty finding text reads as nothing at all. */
-function messageOf(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.trim() === '' ? `a value with no message was thrown (${typeof error})` : text;
-}
-
 /** A journey's own check that failed, as opposed to something the sentinel observed. */
 function assertionFinding(text: string): Finding {
   return { kind: 'assertion', text };
+}
+
+/** The page's URL, which is itself unreadable once the page has closed. */
+function currentUrl(page: Page): string {
+  try {
+    return page.url();
+  } catch {
+    return '<the page could not be asked where it was>';
+  }
+}
+
+/**
+ * Where a minted login must land.
+ *
+ * `mintLogin` spends the token and redirects to `admin_url()`, so a session that was really
+ * established puts the page inside wp-admin. The login page means the token was refused; the
+ * mint URL itself means the request never got that far (a 5xx, say). Both are "no session".
+ */
+function landedInAdmin(url: string): boolean {
+  try {
+    return new URL(url, 'http://wp-journeys.invalid/').pathname.includes('/wp-admin/');
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -45,8 +65,13 @@ function assertionFinding(text: string): Finding {
  * it created itself, so a hardcoded or real-site id is refused by design (R36).
  *
  * The minted URL is visited THROUGH the sentinel, so a broken login is a finding here rather
- * than an unexplained failure three steps later. The mint 302s into wp-admin, so the settled
- * status is 2xx; landing on wp-login.php instead is exactly what `classifyNavigation` reports.
+ * than an unexplained failure three steps later.
+ *
+ * The landing is then checked, because `sentinel.visit` RECORDS a bad landing and returns
+ * normally — it does not throw (R50). Without this check the body would run as an ANONYMOUS
+ * visitor under the named actor's label: today that is a false RESULT rather than a false
+ * green, but for a denial journey an unauthenticated body satisfies an expected denial for
+ * entirely the wrong reason.
  */
 async function authenticate(
   page: Page, sentinel: Sentinel, agent: AgentClient, actor: Actor,
@@ -55,6 +80,13 @@ async function authenticate(
     const { userId } = await agent.ensureActor(actor);
     const { url } = await agent.mintLogin(userId);
     await sentinel.visit(page, url);
+    const landed = currentUrl(page);
+    if (!landedInAdmin(landed)) {
+      throw new Error(
+        // Redacted: the landing may still BE the token URL (R51).
+        `the minted login landed on ${redactLoginToken(landed)} instead of wp-admin — no session was established`,
+      );
+    }
   } catch (error) {
     // Named, because "HTTP 403 for mintLogin" in a summary does not say which step of which
     // journey could not run.
