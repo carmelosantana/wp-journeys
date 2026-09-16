@@ -14,7 +14,8 @@
  * attributes against the plugin under test. Dev-only is not the same as safe for everyone on
  * the LAN.
  *
- * So the gate is the exact shape the runner sends and nothing else: one bare shortcode tag.
+ * So the gate is the exact shape the runner sends and nothing else: one bare shortcode tag,
+ * with any tag name core itself would register.
  * src/suite/rendered-surface.ts sends `[tag]`, so this costs the journeys nothing.
  *
  * `\A` and `\z`, never `^` and `$`: PHP's `$` also matches immediately before a trailing
@@ -27,7 +28,11 @@ function wpj_render_payload_allowed($raw) {
     if (!is_string($raw)) {
         return false;
     }
-    return preg_match('/\A\[[A-Za-z0-9_\-]+\]\z/', $raw) === 1;
+    // The tag class is core's own (wp-includes/shortcodes.php:75 refuses @[<>&/\[\]\x00-\x20=]@),
+    // widened at first contact from [A-Za-z0-9_-], which refused legal tags like [my.tag] and
+    // failed their render as the plugin's defect. It still cannot carry markup (<, >, &) or an
+    // attribute (whitespace, =), so the payload stays one bare tag.
+    return preg_match('/\A\[[^<>&\/\[\]\x00-\x20=]+\]\z/', $raw) === 1;
 }
 
 /**

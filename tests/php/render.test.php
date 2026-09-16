@@ -14,7 +14,19 @@ require __DIR__ . '/../../mu-plugin/src/render.php';
 wpj_assert('a bare shortcode tag is allowed', true, wpj_render_payload_allowed('[wpj_fixture]'));
 wpj_assert('digits, underscores and hyphens are allowed in a tag', true, wpj_render_payload_allowed('[acme_2-x]'));
 
+// Every tag core itself accepts (wp-includes/shortcodes.php:75 forbids only <>&/[] controls,
+// whitespace and =). Refusing a legal registration made the marker go missing, which the runner
+// reports as a defect of the plugin under test.
+wpj_assert('a dotted tag is allowed', true, wpj_render_payload_allowed('[my.tag]'));
+wpj_assert('punctuation core allows is allowed', true, wpj_render_payload_allowed('[tag!]'));
+wpj_assert('a non-ASCII tag is allowed', true, wpj_render_payload_allowed("[caf\xc3\xa9]"));
+
 // Everything else is refused.
+wpj_assert('an ampersand is refused, as core refuses it', false, wpj_render_payload_allowed('[a&b]'));
+wpj_assert('a slash is refused, as core refuses it', false, wpj_render_payload_allowed('[a/b]'));
+wpj_assert('an equals sign is refused, so no attribute can ride along', false, wpj_render_payload_allowed('[a=b]'));
+wpj_assert('a tab is refused, so no attribute can ride along', false, wpj_render_payload_allowed("[a\tb]"));
+wpj_assert('a NUL is refused', false, wpj_render_payload_allowed("[a\0b]"));
 wpj_assert('a script tag is refused', false, wpj_render_payload_allowed('<script>alert(1)</script>'));
 wpj_assert('a shortcode carrying attributes is refused', false, wpj_render_payload_allowed('[acme a="<img onerror=x>"]'));
 wpj_assert('markup after a valid tag is refused', false, wpj_render_payload_allowed('[acme]<script>alert(1)</script>'));
