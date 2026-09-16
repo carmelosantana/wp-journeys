@@ -42,15 +42,25 @@ const RENDER_TEXT =
 const QUIET: string[][] = [[], [], [], []];
 
 /**
+ * A render that PRINTS its diagnostic into the response instead of logging it, which is what
+ * `WP_DEBUG_DISPLAY` does. The `bodyscan` signal catches this, and debug.log may say nothing at
+ * all — so it is a per-request false red that log noise alone cannot subtract (R60).
+ */
+const BODY_WARNING =
+  '<html><body>\nWarning: Undefined variable $notset in /wp-content/themes/acme/header.php on line 8\n</body></html>';
+const CLEAN_BODY = '<html><head></head><body>home</body></html>';
+
+/**
  * The agent, the plugin toggles and the front-end fetch, all recording into ONE ordered
  * sequence. The ordering is the whole point: a baseline taken with the plugin still active
  * attributes its screens and its deprecations to itself and can never find anything.
  *
  * `windows` scripts what each successive log READ returns, in probe order.
  */
-function harness(options: { windows?: string[][]; agent?: Partial<AgentClient> } = {}) {
+function harness(options: { windows?: string[][]; bodies?: string[]; agent?: Partial<AgentClient> } = {}) {
   const sequence: string[] = [];
   const windows = [...(options.windows ?? QUIET)];
+  const bodies = [...(options.bodies ?? [])];
 
   const base: Partial<AgentClient> = {
     ensureActor: async () => ({ userId: 7 }),
@@ -78,7 +88,7 @@ function harness(options: { windows?: string[][]; agent?: Partial<AgentClient> }
 
   const fetchImpl = (async (url: string) => {
     sequence.push(`GET ${url}`);
-    return new Response('<html><head></head><body>home</body></html>');
+    return new Response(bodies.shift() ?? CLEAN_BODY);
   }) as unknown as typeof fetch;
 
   return {
@@ -202,6 +212,49 @@ describe('captureBaseline', () => {
     expect((await captureBaseline(agent, CFG, deactivate, activate, fetchImpl)).logNoise).toEqual([]);
   });
 
+  it('records a diagnostic PRINTED into the body as per-request noise too (R60)', async () => {
+    // The front-end probe already fetches and fully drains the body; it used to discard it. A
+    // site with WP_DEBUG_DISPLAY on prints its per-request warning into every render, and the
+    // bodyscan signal reports it once per journey as a defect of whatever is under test — a
+    // false red that log noise alone cannot reach, because nothing need be written to the log.
+    const { agent, fetchImpl, deactivate, activate } = harness({
+      bodies: [BODY_WARNING, BODY_WARNING],
+    });
+
+    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+
+    expect(baseline.bodyNoise).toHaveLength(1);
+  });
+
+  it('applies the twice-sampled rule to body noise as well, so a one-off is never subtracted', async () => {
+    // R48 again, for the same reason: the subtraction removes EVERY occurrence for the whole
+    // run, so a diagnostic that appeared in only one of the two renders must not enter the set
+    // — that is the over-subtraction route to a false green.
+    const { agent, fetchImpl, deactivate, activate } = harness({
+      bodies: [BODY_WARNING, CLEAN_BODY],
+    });
+
+    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+
+    expect(baseline.bodyNoise).toEqual([]);
+  });
+
+  it('measures body noise even when the log signal is unavailable', async () => {
+    // The two signals are independent evidence. Coupling them would mean a site with
+    // WP_DEBUG_LOG off gets no body subtraction either, for no reason.
+    const { agent, fetchImpl, deactivate, activate } = harness({
+      bodies: [BODY_WARNING, BODY_WARNING],
+      agent: {
+        logDelta: async () => ({ offset: 0, lines: [], available: false, reason: 'WP_DEBUG_LOG is off' }),
+      },
+    });
+
+    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+
+    expect(baseline.logNoise).toEqual([]);
+    expect(baseline.bodyNoise).toHaveLength(1);
+  });
+
   it('records no noise, rather than guessing, when the log signal is unavailable', async () => {
     // Under-subtracting costs a false red, which is loud. Guessing would cost a false green.
     const { agent, fetchImpl, deactivate, activate } = harness({
@@ -259,7 +312,44 @@ describe('withoutBaselineNoise', () => {
     surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
     snapshot: SNAPSHOT,
     logNoise: [NOISE_TEXT],
+    bodyNoise: [],
   };
+
+  /** A baseline whose front-end probe saw the printed warning on BOTH renders. */
+  async function baselineWithBodyNoise() {
+    const { agent, fetchImpl, deactivate, activate } = harness({
+      bodies: [BODY_WARNING, BODY_WARNING],
+    });
+    return captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+  }
+
+  it('subtracts a body diagnostic seen at a DIFFERENT url than the baseline probed (R60)', async () => {
+    // The design question. `scanBody` embeds the url in the finding's text, and the baseline
+    // probes only the site root — so keying the subtraction on the whole text would never match
+    // the same per-request warning seen on /wp-admin/, and the false red would survive
+    // everywhere except the home page. The key must be url-independent.
+    const captured = await baselineWithBodyNoise();
+    const findings: Finding[] = [{
+      kind: 'bodyscan',
+      url: 'https://s.test/wp-admin/options-general.php',
+      text: 'PHP Warning printed into the response body at https://s.test/wp-admin/options-general.php',
+    }];
+
+    expect(withoutBaselineNoise(findings, captured)).toEqual([]);
+  });
+
+  it('keeps a body diagnostic of a severity the baseline never saw', async () => {
+    // The url-independent key must not collapse every bodyscan into one bucket: a fatal on a
+    // site whose per-request noise is a warning is the plugin under test, and it must survive.
+    const captured = await baselineWithBodyNoise();
+    const findings: Finding[] = [{
+      kind: 'bodyscan',
+      url: 'https://s.test/wp-admin/',
+      text: 'PHP Fatal error printed into the response body at https://s.test/wp-admin/',
+    }];
+
+    expect(withoutBaselineNoise(findings, captured)).toEqual(findings);
+  });
 
   it('drops EVERY occurrence of a per-request diagnostic, not just the first', async () => {
     // A journey that loads three pages writes the site's per-request notice three times. Taking
@@ -282,9 +372,10 @@ describe('withoutBaselineNoise', () => {
     expect(withoutBaselineNoise(findings, baseline)).toEqual([findings[1]]);
   });
 
-  it('subtracts only the log signal, never a finding another signal produced', async () => {
-    // The baseline is measured from debug.log alone, so it is evidence about nothing else. A
-    // bodyscan or a 500 that happens to carry the same words is a different observation.
+  it('never subtracts a bodyscan on the strength of LOG noise alone', async () => {
+    // The two signals are keyed separately and neither vouches for the other. A bodyscan or an
+    // assertion that happens to carry the same words as a logged diagnostic is a different
+    // observation, and the baseline is not evidence about it.
     const findings: Finding[] = [
       { kind: 'bodyscan', text: NOISE_TEXT, url: 'https://s.test/' },
       { kind: 'assertion', text: NOISE_TEXT },

@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import { Actor } from '../src/actors/roles.ts';
@@ -13,6 +16,7 @@ const BASELINE: Baseline = {
   surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
   snapshot: { options: [], tables: [], cron: [], userMeta: [] },
   logNoise: [NOISE_TEXT],
+  bodyNoise: [],
 };
 
 /** Nothing in these journeys touches the browser, config or agent, so none is supplied. */
@@ -39,6 +43,20 @@ describe('parseArgs', () => {
     // R10's class is [a-z0-9._-], which includes the underscore — this repo's own fixture is
     // `wpj-fixture`, but a slug like `really_simple_ssl` is ordinary and must not be refused.
     expect(parseArgs(['run', '--plugin', 'really_simple_ssl'])).toEqual({ ok: true, plugin: 'really_simple_ssl' });
+  });
+
+  it('refuses an argument it did not consume, rather than silently ignoring it', () => {
+    // `indexOf('--plugin')` scans for one flag and ignores every other token, so a typo runs the
+    // whole destructive suite against the wrong plugin without a word of complaint. A missing
+    // --plugin and an unknown command already fail loudly; an unconsumed argument must too.
+    expect(parseArgs(['run', '--plugin', 'acme', '--pluginn', 'other']).ok).toBe(false);
+    expect(parseArgs(['run', '--pluginn', 'other', '--plugin', 'acme']).ok).toBe(false);
+    expect(parseArgs(['run', '--verbose', '--plugin', 'acme']).ok).toBe(false);
+    expect(parseArgs(['run', '--plugin', 'acme', 'extra']).ok).toBe(false);
+
+    // It names the argument it could not account for, so the typo is obvious.
+    const refusal = parseArgs(['run', '--plugin', 'acme', '--pluginn', 'other']);
+    expect(refusal.ok === false && refusal.reason).toContain('--pluginn');
   });
 
   it('refuses a missing command, an unknown command and a missing --plugin', () => {
@@ -70,6 +88,45 @@ describe('parseArgs', () => {
     ]) {
       expect(parseArgs(['run', '--plugin', bad]).ok, bad).toBe(false);
     }
+  });
+});
+
+describe('the wpj entry point', () => {
+  const wpj = fileURLToPath(new URL('../bin/wpj.js', import.meta.url));
+
+  /** Run the real binary. With no valid command it exits before touching config or the site. */
+  function runCli(args: string[]): { code: number; stdout: string; stderr: string } {
+    const result = spawnSync(process.execPath, [wpj, ...args], { encoding: 'utf8' });
+    return { code: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  it('sends the whole of usage to stderr, leaving stdout for the summary alone', () => {
+    // A CI job parsing stdout expects a run summary there. Usage text arriving on stdout on the
+    // exit-2 path hands it something that is neither a summary nor nothing.
+    const { code, stdout, stderr } = runCli([]);
+
+    expect(code).toBe(2);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('usage:');
+    expect(stderr).toContain('no command given');
+  });
+
+  it('warns in usage that a completed run UNINSTALLS the plugin under test', () => {
+    // The lifecycle journey runs `wp plugin uninstall --deactivate --skip-delete` last. The
+    // files survive — that is all R6 protects — but the plugin's options, tables, cron events
+    // and user meta are genuinely deleted and it is left inactive. Nothing said so before.
+    const { stderr } = runCli([]);
+
+    expect(stderr).toMatch(/uninstall/i);
+    expect(stderr).toMatch(/scratch|disposable|throwaway/i);
+  });
+
+  it('names the environment variables without ever carrying a value for the secret', () => {
+    const { stdout, stderr } = runCli([]);
+    const all = stdout + stderr;
+
+    expect(all).toContain('WPJ_AGENT_SECRET');
+    expect(all).not.toMatch(/WPJ_AGENT_SECRET\s*[=:]\s*\S/);
   });
 });
 
@@ -207,6 +264,31 @@ describe('runSuite', () => {
     // The shape that threw must not survive into the result, or the renderer throws on it next.
     expect(malformed.skipReason).toBeUndefined();
     expect(malformed.skipped).toBeUndefined();
+  });
+
+  it('keeps the findings a malformed result had ALREADY collected, not just the error', async () => {
+    // The journey fails either way, so no pass/fail signal was ever at stake — but replacing the
+    // findings wholesale discards the real defects it found on the way to being malformed, and
+    // those are the only reason anyone reads the summary.
+    const real = { kind: 'phplog' as const, text: 'PHP Warning: Undefined array key "id"' };
+    const suite = register(
+      scripted('malformed', async () => resultOf('malformed', {
+        skipReason: 'acme is not active',
+        entitiesCreated: 3,
+        findings: [real, { kind: 'phplog', text: NOISE_TEXT }],
+      })),
+    );
+
+    const results = await runSuite(suite, nothing, nothing, nothing, BASELINE);
+    const malformed = results[0]!;
+
+    // The real finding survives, the baseline noise is still subtracted, the error is appended.
+    expect(malformed.findings).toEqual([
+      real,
+      { kind: 'assertion', text: expect.stringMatching(/half-declared skip/) },
+    ]);
+    // It ran and created three entities; that fact is not erased by the shape being refused.
+    expect(malformed.entitiesCreated).toBe(3);
   });
 
   it('returns results the renderer can always consume', async () => {

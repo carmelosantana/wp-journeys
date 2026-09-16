@@ -24,6 +24,7 @@ import { messageOf } from '../errors.ts';
 import { outcomeOf } from '../journeys/index.ts';
 import type { Journey, JourneyResult } from '../journeys/index.ts';
 import { exitCodeFor, renderSummary } from '../report/summary.ts';
+import type { Finding } from '../sentinel/phplog.ts';
 import { captureBaseline, withoutBaselineNoise } from '../suite/baseline.ts';
 import type { Baseline } from '../suite/baseline.ts';
 import { conformanceSurface, coreSuite } from '../suite/index.ts';
@@ -53,11 +54,27 @@ export function parseArgs(argv: string[]): ParsedArgs {
     };
   }
 
-  const at = argv.indexOf('--plugin');
-  if (at === -1) return { ok: false, reason: '--plugin <slug> is required' };
+  // Every argument must be ACCOUNTED FOR, not merely searched for. Scanning with
+  // `indexOf('--plugin')` silently ignores every other token, so `--pluginn other` would run the
+  // whole destructive suite against the wrong plugin without a word. A missing --plugin and an
+  // unknown command already fail loudly; an unconsumed argument fails the same way.
+  const rest = argv.slice(1);
+  if (rest.length === 0) return { ok: false, reason: '--plugin <slug> is required' };
+  if (rest[0] !== '--plugin') {
+    return {
+      ok: false,
+      reason: `unexpected argument ${JSON.stringify(rest[0])} — wpj run takes only --plugin <slug>`,
+    };
+  }
 
-  const plugin = argv[at + 1];
+  const plugin = rest[1];
   if (plugin === undefined) return { ok: false, reason: '--plugin needs a slug after it' };
+  if (rest.length > 2) {
+    return {
+      ok: false,
+      reason: `unexpected argument ${JSON.stringify(rest[2])} — wpj run takes only --plugin <slug>`,
+    };
+  }
   if (!SLUG.test(plugin)) {
     // JSON-quoted, so a slug carrying control or escape characters cannot rewrite the terminal
     // on its way to being rejected.
@@ -110,7 +127,10 @@ export function wpCommands(wp: string, plugin: string): WpCommands {
  *    summary. Calling it inside the guard converts that into one failed journey.
  *
  * The result built in the catch carries neither `skipped` nor `skipReason`, so it is well-formed
- * by construction — including when what threw was the malformed shape itself.
+ * by construction — including when what threw was the malformed shape itself. It DOES carry
+ * whatever findings the journey had already collected: the journey fails either way, so no
+ * pass/fail signal is at stake, but discarding the real defects it found on its way to being
+ * refused would throw away the only thing anyone reads the summary for.
  */
 export async function runSuite(
   suite: Record<string, Journey>,
@@ -122,12 +142,14 @@ export async function runSuite(
   const results: JourneyResult[] = [];
 
   for (const journey of Object.values(suite)) {
+    // Held outside the try so the catch can still see what the journey got through before it
+    // failed. Both stay at their defaults when it was `run()` itself that threw.
+    let raw: JourneyResult | undefined;
+    let carried: Finding[] = [];
     try {
-      const raw = await journey.run(browser, cfg, agent);
-      const settled: JourneyResult = {
-        ...raw,
-        findings: withoutBaselineNoise(raw.findings, baseline),
-      };
+      raw = await journey.run(browser, cfg, agent);
+      carried = withoutBaselineNoise(raw.findings, baseline);
+      const settled: JourneyResult = { ...raw, findings: carried };
       // Called for its REFUSAL, not its value: this is where a half-declared skip is caught,
       // while it can still be reported as one journey's failure.
       outcomeOf(settled);
@@ -137,8 +159,8 @@ export async function runSuite(
         name: journey.name,
         actor: journey.actor,
         surface: journey.surface,
-        entitiesCreated: 0,
-        findings: [{ kind: 'assertion', text: messageOf(error) }],
+        entitiesCreated: raw?.entitiesCreated ?? 0,
+        findings: [...carried, { kind: 'assertion', text: messageOf(error) }],
       });
     }
   }
@@ -146,15 +168,27 @@ export async function runSuite(
   return results;
 }
 
+/**
+ * All of it to stderr. stdout carries the run summary and nothing else, so a CI job parsing
+ * stdout is never handed usage text on the exit-2 path.
+ *
+ * It also states what a completed run DOES, which nothing told the operator before: the
+ * lifecycle journey uninstalls the plugin under test. `--skip-delete` keeps the files (R6) but
+ * the uninstall routine itself runs, and that is not a read-only operation.
+ */
 function usage(reason: string): void {
-  process.stderr.write(`${reason}\n\n`);
-  process.stdout.write(
-    'usage:\n' +
+  process.stderr.write(
+    `${reason}\n\n` +
+      'usage:\n' +
       '  wpj run --plugin <slug>    run the conformance suite against a plugin\n' +
       '\nenvironment:\n' +
       '  WPJ_BASE_URL      the target site; local hostnames only\n' +
       '  WPJ_AGENT_SECRET  the shared secret the companion mu-plugin expects\n' +
-      '  WPJ_WP            the wp-cli command used to toggle the plugin under test\n',
+      '  WPJ_WP            the wp-cli command used to toggle the plugin under test\n' +
+      '\nA completed run UNINSTALLS the plugin under test. The last journey deactivates it and\n' +
+      'runs its uninstall routine, so its options, tables, cron events and user meta are really\n' +
+      'deleted and it is left inactive; only the plugin FILES are kept. It also creates six\n' +
+      'WordPress users. Point this at a scratch site, never at anything you care about.\n',
   );
 }
 

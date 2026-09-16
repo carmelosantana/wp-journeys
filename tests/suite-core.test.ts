@@ -138,6 +138,7 @@ describe('coreSuite', () => {
     surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
     snapshot: { options: [], tables: [], cron: [], userMeta: [] },
     logNoise: [],
+    bodyNoise: [],
   };
 
   it('registers the shared journeys plus one admin sweep per actor', () => {

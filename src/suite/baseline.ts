@@ -10,7 +10,10 @@
  *  - the SNAPSHOT, so another plugin's options and tables are never reported as this one's
  *    uninstall orphans;
  *  - the per-request LOG NOISE (R45), so a deprecation this site writes on every request is not
- *    reported once per journey as a defect of the plugin under test.
+ *    reported once per journey as a defect of the plugin under test;
+ *  - the per-request BODY NOISE (R60), the same thing for a diagnostic PRINTED into the response
+ *    instead of logged — which is what `WP_DEBUG_DISPLAY` does, and which the log signal cannot
+ *    reach because nothing need be written to the log at all.
  */
 import { ALL_ACTORS, isAnonymous } from '../actors/roles.ts';
 import type { AgentClient } from '../agent/client.ts';
@@ -19,6 +22,7 @@ import type { Snapshot } from '../discovery/snapshot.ts';
 import { projectSurface } from '../discovery/surface.ts';
 import type { Surface } from '../discovery/types.ts';
 import { messageOf } from '../errors.ts';
+import { scanBody } from '../sentinel/classify.ts';
 import { classifyPhpLogLine, type Finding } from '../sentinel/phplog.ts';
 
 export interface Baseline {
@@ -29,10 +33,41 @@ export interface Baseline {
    * off. Subtracted from a journey's findings by `withoutBaselineNoise`.
    */
   logNoise: string[];
+  /**
+   * The same, for diagnostics PRINTED into the response body. Held as URL-INDEPENDENT keys, not
+   * as finding texts: `scanBody` embeds the URL it scanned, and the baseline only ever probes
+   * the site root, so a text-keyed set would never match the same per-request warning seen on
+   * `/wp-admin/` and the false red would survive everywhere but the home page.
+   */
+  bodyNoise: string[];
 }
 
-/** One shape of ordinary WordPress request, used to see what it writes to the log. */
-type Probe = () => Promise<void>;
+/** One shape of ordinary WordPress request, used to see what it emits. */
+interface Probe {
+  /** Where the body came from; only used to build the finding `bodyNoiseKey` then strips. */
+  url: string;
+  /** Drive the request, returning a body to scan, or `null` when there is none worth scanning. */
+  run(): Promise<string | null>;
+}
+
+/** What one probe emitted through each signal. */
+interface Sample {
+  /** `null` means the log signal was LOST for this window — which is not the same as clean. */
+  log: Set<string> | null;
+  body: Set<string>;
+}
+
+/**
+ * A body finding reduced to what is comparable across URLs.
+ *
+ * `scanBody` puts the URL it scanned inside `text`, so two sightings of one per-request warning
+ * differ by exactly that. Replacing the finding's own URL with a placeholder leaves the part
+ * that identifies the diagnostic — its severity — while keeping different diagnostics apart, so
+ * a fatal is never subtracted because the site happens to emit a warning on every request.
+ */
+function bodyNoiseKey(finding: Finding): string {
+  return finding.url ? finding.text.split(finding.url).join('<url>') : finding.text;
+}
 
 /**
  * Create the runner's own users BEFORE the snapshot is taken (R36).
@@ -54,23 +89,33 @@ async function provisionActors(agent: AgentClient): Promise<void> {
 }
 
 /**
- * Drive one request and classify the debug.log window it produced, or `null` when the log
- * signal was unavailable and this sample therefore says nothing.
+ * Drive one request and classify what it emitted through both signals.
+ *
+ * The two are independent evidence and are kept that way: the probe runs even when the log
+ * signal is unavailable, so a site with `WP_DEBUG_LOG` off still gets its body noise measured.
+ * Coupling them would withhold one subtraction because the other could not be made.
  */
-async function sampleWindow(agent: AgentClient, probe: Probe): Promise<Set<string> | null> {
+async function sampleWindow(agent: AgentClient, probe: Probe): Promise<Sample> {
   // Size-only, never logDelta(0): that pulls the whole file back to learn a length (R33).
   const start = await agent.logDelta('end');
-  if (!start.available) return null;
-  await probe();
+  const body = await probe.run();
+
+  const bodyKeys = new Set<string>();
+  if (body !== null) {
+    const finding = scanBody(body, probe.url);
+    if (finding) bodyKeys.add(bodyNoiseKey(finding));
+  }
+
+  if (!start.available) return { log: null, body: bodyKeys };
   const delta = await agent.logDelta(start.offset);
-  if (!delta.available) return null;
+  if (!delta.available) return { log: null, body: bodyKeys };
 
   const texts = new Set<string>();
   for (const line of delta.lines) {
     const finding = classifyPhpLogLine(line);
     if (finding) texts.add(finding.text);
   }
-  return texts;
+  return { log: texts, body: bodyKeys };
 }
 
 /**
@@ -87,17 +132,28 @@ async function sampleWindow(agent: AgentClient, probe: Probe): Promise<Set<strin
  * false red, which the sentinel is already reporting loudly, and over-subtracting would cost a
  * false green.
  */
-async function measureLogNoise(agent: AgentClient, probes: Probe[]): Promise<string[]> {
-  const noise = new Set<string>();
+async function measureNoise(
+  agent: AgentClient,
+  probes: Probe[],
+): Promise<{ log: string[]; body: string[] }> {
+  const log = new Set<string>();
+  const body = new Set<string>();
   for (const probe of probes) {
     const first = await sampleWindow(agent, probe);
     const second = await sampleWindow(agent, probe);
-    if (!first || !second) continue;
-    for (const text of first) {
-      if (second.has(text)) noise.add(text);
+    if (first.log && second.log) {
+      for (const text of first.log) {
+        if (second.log.has(text)) log.add(text);
+      }
+    }
+    // The same twice-sampled discipline, for the same reason: the subtraction removes EVERY
+    // occurrence for the whole run, so a one-off body diagnostic entering this set would strip a
+    // genuine defect carrying that severity from every journey.
+    for (const key of first.body) {
+      if (second.body.has(key)) body.add(key);
     }
   }
-  return [...noise];
+  return { log: [...log], body: [...body] };
 }
 
 /**
@@ -115,16 +171,21 @@ export async function captureBaseline(
 ): Promise<Baseline> {
   const probes: Probe[] = [
     // The shape the sentinel's own logDelta round trip makes, which is why its noise lands in
-    // every journey's window.
-    async () => { await agent.status(); },
+    // every journey's window. Its body is JSON from the agent, not a rendered page, so there is
+    // nothing there the body scanner should judge.
+    { url: cfg.baseUrl, run: async () => { await agent.status(); return null; } },
     // A front-end render (R49). wp_head, the theme and the whole template path never run on a
     // REST request, so a REST-only probe is structurally blind to the most common source of
     // per-request noise on a real site.
-    async () => {
-      const response = await fetchImpl(cfg.baseUrl);
-      // Drain the body: the render, and every diagnostic it writes, must be complete before
-      // the log window is read.
-      await response.text();
+    {
+      url: cfg.baseUrl,
+      run: async () => {
+        const response = await fetchImpl(cfg.baseUrl);
+        // Drained for two reasons now: the render and every diagnostic it writes must be
+        // complete before the log window is read, AND the body itself is evidence (R60). It used
+        // to be read and thrown away, which is why body noise cost nothing to start measuring.
+        return response.text();
+      },
     },
   ];
 
@@ -138,8 +199,8 @@ export async function captureBaseline(
     await provisionActors(agent);
     const surface = projectSurface(await agent.discover());
     const snapshot = await agent.snapshot();
-    const logNoise = await measureLogNoise(agent, probes);
-    return { surface, snapshot, logNoise };
+    const noise = await measureNoise(agent, probes);
+    return { surface, snapshot, logNoise: noise.log, bodyNoise: noise.body };
   } catch (error) {
     failure = error;
     throw error;
@@ -158,20 +219,29 @@ export async function captureBaseline(
 }
 
 /**
- * Drop the diagnostics this site writes whatever is under test (R45).
+ * Drop the diagnostics this site emits whatever is under test (R45, R60).
  *
- * Only the `phplog` signal is subtracted: the baseline is measured from debug.log alone, so it
- * is evidence about nothing else. EVERY occurrence goes, not one per baseline line — a journey
- * that loads three pages writes the site's per-request notice three times, and taking one off
- * would leave two false reds behind.
+ * Two signals are subtracted, each against evidence measured through that same signal and no
+ * other: `phplog` against what the baseline saw in debug.log, and `bodyscan` against what it saw
+ * printed into a rendered body. Neither vouches for the other — a body diagnostic is not
+ * subtracted because a log line happened to carry the same words, and vice versa. Every other
+ * signal (`response`, `console`, `requestfailed`, `assertion`) is left entirely alone: the
+ * baseline is not evidence about any of them.
  *
- * The trade-off, stated plainly: a diagnostic from the plugin under test whose text is
- * character-for-character one the site already emits without it is subtracted too. By
- * definition that text is not attributable to the plugin, which is the same rule the surface
- * and snapshot deltas follow — and the two-sample rule above is what keeps a one-off line from
- * ever entering this set.
+ * EVERY occurrence goes, not one per baseline entry — a journey that loads three pages emits the
+ * site's per-request notice three times, and taking one off would leave two false reds behind.
+ *
+ * The trade-off, stated plainly: a diagnostic from the plugin under test that is
+ * indistinguishable from one the site already emits without it is subtracted too. By definition
+ * it is not attributable to the plugin, which is the same rule the surface and snapshot deltas
+ * follow — and the two-sample rule above is what keeps a one-off from ever entering either set.
  */
 export function withoutBaselineNoise(findings: readonly Finding[], baseline: Baseline): Finding[] {
-  const noise = new Set(baseline.logNoise);
-  return findings.filter((finding) => !(finding.kind === 'phplog' && noise.has(finding.text)));
+  const logNoise = new Set(baseline.logNoise);
+  const bodyNoise = new Set(baseline.bodyNoise);
+  return findings.filter((finding) => {
+    if (finding.kind === 'phplog') return !logNoise.has(finding.text);
+    if (finding.kind === 'bodyscan') return !bodyNoise.has(bodyNoiseKey(finding));
+    return true;
+  });
 }
