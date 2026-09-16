@@ -19,7 +19,7 @@ import type { Browser } from '@playwright/test';
 
 import { createAgentClient } from '../agent/client.ts';
 import type { AgentClient } from '../agent/client.ts';
-import { loadConfig } from '../config.ts';
+import { BASE_URL_VAR, loadConfig, SECRET_VAR } from '../config.ts';
 import type { Config } from '../config.ts';
 import { projectSurface } from '../discovery/surface.ts';
 import type { Surface } from '../discovery/types.ts';
@@ -36,6 +36,14 @@ import { conformanceSurface, coreSuite } from '../suite/index.ts';
 import { launchChromium } from './browser.ts';
 
 const run = promisify(execFile);
+
+/** The variables `wpj` reads beyond config.ts's two, named once (see config.ts). */
+export const WP_VAR = 'WPJ_WP';
+export const MANIFEST_DIR_VAR = 'WPJ_MANIFEST_DIR';
+export const HOME_VAR = 'HOME';
+
+/** Every variable the CLI reads, in the order usage() lists them. */
+export const CLI_ENV = [BASE_URL_VAR, SECRET_VAR, WP_VAR, HOME_VAR, MANIFEST_DIR_VAR] as const;
 
 /**
  * wp-harness's own slug rule. The slug is interpolated into a `sh -c` string to toggle the
@@ -152,17 +160,17 @@ export async function manifestPlan(env: NodeJS.ProcessEnv, plugin: string): Prom
         + 'wp-journeys.json (which is not necessarily the plugin root you mounted).',
     );
   }
-  const dir = env.WPJ_MANIFEST_DIR;
+  const dir = env[MANIFEST_DIR_VAR];
   if (dir === undefined) return { journeys: [], deprecatedShortcodes: [] };
   // Set but empty is a mistake, not "unset": the operator named a manifest and got none.
   if (dir === '') {
-    throw new Error('WPJ_MANIFEST_DIR is set but empty — name the directory holding wp-journeys.json, or unset it.');
+    throw new Error(`${MANIFEST_DIR_VAR} is set but empty — name the directory holding wp-journeys.json, or unset it.`);
   }
 
   const manifest = await loadManifest(dir);
   if (manifest === null) {
     throw new Error(
-      `WPJ_MANIFEST_DIR is set, but ${join(dir, 'wp-journeys.json')} does not exist — `
+      `${MANIFEST_DIR_VAR} is set, but ${join(dir, 'wp-journeys.json')} does not exist — `
         + 'name the directory the manifest is in, or unset the variable to run the core suite alone.',
     );
   }
@@ -329,11 +337,11 @@ function usage(reason: string): void {
       '  wpj mcp                    serve the runner as MCP tools over stdio\n' +
       '  wpj skills install         link this package\'s agent skills into ~/.claude/skills\n' +
       '\nenvironment:\n' +
-      '  WPJ_BASE_URL      the target site; local hostnames only\n' +
-      '  WPJ_AGENT_SECRET  the shared secret the companion mu-plugin expects\n' +
-      '  WPJ_WP            the wp-cli command used to toggle the plugin under test\n' +
-      '  HOME              `skills install` links into $HOME/.claude/skills\n' +
-      '  WPJ_MANIFEST_DIR  optional: the directory holding the plugin\'s wp-journeys.json. Not\n' +
+      `  ${BASE_URL_VAR.padEnd(18)}the target site; local hostnames only\n` +
+      `  ${SECRET_VAR.padEnd(18)}the shared secret the companion mu-plugin expects\n` +
+      `  ${WP_VAR.padEnd(18)}the wp-cli command used to toggle the plugin under test\n` +
+      `  ${HOME_VAR.padEnd(18)}\`skills install\` links into $${HOME_VAR}/.claude/skills\n` +
+      `  ${MANIFEST_DIR_VAR.padEnd(18)}optional: the directory holding the plugin's wp-journeys.json. Not\n` +
       '                    necessarily the plugin root you mounted; escape-hatch module paths\n' +
       '                    resolve against, and must stay inside, this directory\n' +
       '\nA completed run UNINSTALLS the plugin under test. The last journey deactivates it and\n' +
@@ -369,7 +377,7 @@ async function skillsCommand(args: string[], env: NodeJS.ProcessEnv): Promise<nu
   }
   const { installSkills } = await import('../commands/skills.ts');
   // The env main was given, not process.env: that is what a test (and `HOME=… wpj`) controls.
-  return installSkills(env.HOME || homedir());
+  return installSkills(env[HOME_VAR] || homedir());
 }
 
 /**
@@ -409,10 +417,10 @@ export async function main(
 
   // wp-cli is used ONLY to toggle the plugin under test — everything else goes through the
   // agent, so a target without wp-cli loses only this one capability, loudly.
-  const wp = env.WPJ_WP;
+  const wp = env[WP_VAR];
   if (!wp) {
     process.stderr.write(
-      'WPJ_WP is not set — the runner needs a wp-cli command to toggle the plugin.\n',
+      `${WP_VAR} is not set — the runner needs a wp-cli command to toggle the plugin.\n`,
     );
     return 2;
   }

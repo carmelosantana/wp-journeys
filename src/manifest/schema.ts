@@ -77,8 +77,8 @@ const SURFACES: readonly SurfaceAxis[] = ['admin', 'frontend', 'both'];
  */
 /** `$schema` is for editor completion and `description` stands in for the comments JSON lacks. */
 export const MANIFEST_KEYS = ['$schema', 'description', 'version', 'plugin', 'gate', 'deprecated', 'journeys'] as const;
-const GATE_KEYS = ['screen'];
-const DEPRECATED_KEYS = ['shortcodes'];
+export const GATE_KEYS = ['screen'] as const;
+export const DEPRECATED_KEYS = ['shortcodes'] as const;
 export const JOURNEY_KEYS = ['name', 'actor', 'surface', 'screens', 'settings', 'shortcodes', 'module'] as const;
 export const SCREEN_KEYS = ['url', 'allow', 'deny'] as const;
 export const SETTING_KEYS = ['url', 'field', 'value', 'readBack'] as const;

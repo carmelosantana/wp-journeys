@@ -11,6 +11,13 @@ export interface Config {
   secret: string;
 }
 
+/**
+ * The variables this module reads, named once. Exported so the README and the skills can be
+ * checked against the names the code actually reads (tests/skills-content.test.ts).
+ */
+export const BASE_URL_VAR = 'WPJ_BASE_URL';
+export const SECRET_VAR = 'WPJ_AGENT_SECRET';
+
 /** Hostnames the runner will drive. Anything else is refused. */
 function isLocalHost(hostname: string): boolean {
   return (
@@ -28,9 +35,9 @@ function isLocalHost(hostname: string): boolean {
 export const MIN_SECRET_LENGTH = 16;
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
-  const baseUrl = env.WPJ_BASE_URL;
+  const baseUrl = env[BASE_URL_VAR];
   if (!baseUrl) {
-    throw new Error('WPJ_BASE_URL is not set — the runner has no target.');
+    throw new Error(`${BASE_URL_VAR} is not set — the runner has no target.`);
   }
   const { hostname } = new URL(baseUrl);
   if (!isLocalHost(hostname)) {
@@ -38,9 +45,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
       `refusing a non-local target: ${hostname}. wp-journeys creates users, toggles plugins and reads debug.log; it is for development sites only.`,
     );
   }
-  const secret = env.WPJ_AGENT_SECRET ?? '';
+  const secret = env[SECRET_VAR] ?? '';
   if (secret.length < MIN_SECRET_LENGTH) {
-    throw new Error(`WPJ_AGENT_SECRET must be at least ${MIN_SECRET_LENGTH} characters.`);
+    throw new Error(`${SECRET_VAR} must be at least ${MIN_SECRET_LENGTH} characters.`);
   }
   return { baseUrl, secret };
 }

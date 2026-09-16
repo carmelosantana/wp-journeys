@@ -8,6 +8,7 @@
  * Exiting lives here rather than in `src/runner/cli.ts`, which keeps that module importable —
  * and therefore testable — without ending the process that imports it.
  */
+import { SECRET_VAR } from '../src/config.ts';
 import { redactSecret } from '../src/errors.ts';
 import { main } from '../src/runner/cli.ts';
 import { redactLoginToken } from '../src/sentinel/classify.ts';
@@ -21,7 +22,7 @@ main().then(
     // not be captured. It is a failed run, not a clean one.
     // Neither the secret nor a login token reaches stderr, even if a message quotes one (M1, R95e).
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${redactLoginToken(redactSecret(message, process.env.WPJ_AGENT_SECRET))}\n`);
+    process.stderr.write(`${redactLoginToken(redactSecret(message, process.env[SECRET_VAR]))}\n`);
     process.exit(1);
   },
 );

@@ -12,13 +12,37 @@ import { ALL_ACTORS } from '../src/actors/roles.ts';
 import { skillsRoot } from '../src/commands/skills.ts';
 import { TOOLS } from '../src/mcp/tools.ts';
 import { SPAWN_TIMEOUT_MS } from './helpers/timeouts.ts';
-import { JOURNEY_KEYS, MANIFEST_KEYS, OPTIONAL_SETTING_KEYS, SCREEN_KEYS, SETTING_KEYS, parseManifest } from '../src/manifest/schema.ts';
+import {
+  DEPRECATED_KEYS, GATE_KEYS, JOURNEY_KEYS, MANIFEST_KEYS, OPTIONAL_SETTING_KEYS, SCREEN_KEYS, SETTING_KEYS, parseManifest,
+} from '../src/manifest/schema.ts';
+import { CLI_ENV, HOME_VAR } from '../src/runner/cli.ts';
 
 const RUNNING = join(skillsRoot(), 'wp-journeys-running');
 const AUTHORING = join(skillsRoot(), 'wp-journeys-authoring');
 
 async function read(path: string): Promise<string> {
   return readFile(path, 'utf8');
+}
+
+/**
+ * The inline code spans of a markdown text, read left to right the way a renderer pairs the
+ * backticks, so the text BETWEEN two spans is never mistaken for one.
+ */
+function codeSpans(text: string): string[] {
+  return [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!);
+}
+
+/**
+ * Whether `key` is written as a manifest key: a span that IS the key, a dotted path with the key
+ * as one segment (`gate.screen`, `settings[].submit`), or a `{a, b?}` shape listing it. A word
+ * inside some other span (`/path`) does not count.
+ */
+function documentsKey(text: string, key: string): boolean {
+  return codeSpans(text).some((span) => {
+    const members = /^\{(.*)\}$/.exec(span);
+    if (members) return members[1]!.split(',').map((m) => m.trim().replace(/\?$/, '')).includes(key);
+    return span.split('.').map((segment) => segment.replace(/\[\]$/, '').replace(/\?$/, '')).includes(key);
+  });
 }
 
 /** Every `.md` file of a skill, SKILL.md first. */
@@ -71,9 +95,11 @@ describe('the running skill', () => {
 
   it('names every variable the runner reads', async () => {
     const text = await read(join(RUNNING, 'SKILL.md'));
-    for (const variable of ['WPJ_BASE_URL', 'WPJ_AGENT_SECRET', 'WPJ_WP', 'WPJ_MANIFEST_DIR']) {
-      expect(text).toContain(`\`${variable}\``);
-    }
+    // From the modules that read them, so a renamed variable fails here (R103). HOME belongs to
+    // `skills install`, which the README documents; the skill's table is for `wpj run`.
+    const variables = CLI_ENV.filter((name) => name !== HOME_VAR);
+    expect(variables.length).toBe(4);
+    for (const variable of variables) expect(codeSpans(text)).toContain(variable);
   });
 
   it('says a skip is not a pass, and that run_journey toggles the plugin and refuses lifecycle', async () => {
@@ -119,11 +145,18 @@ describe('the dev-only warning in the running skill (R103)', () => {
 describe('the authoring skill', () => {
   it('documents every key the manifest schema accepts', async () => {
     const text = await read(join(AUTHORING, 'SKILL.md'));
-    const keys = [...MANIFEST_KEYS, ...JOURNEY_KEYS, ...SCREEN_KEYS, ...SETTING_KEYS, ...OPTIONAL_SETTING_KEYS, 'gate.screen', 'deprecated.shortcodes'];
-    for (const key of keys.filter((k) => k !== 'gate' && k !== 'deprecated')) {
-      // Written as code: after a backtick, with no backtick in between.
-      expect(text, key).toMatch(new RegExp(`\`[^\`]*(?<!\\w)${key.replace(/[$.]/g, '\\$&')}(?!\\w)`));
-    }
+    const keys = [...MANIFEST_KEYS, ...JOURNEY_KEYS, ...SCREEN_KEYS, ...SETTING_KEYS, ...OPTIONAL_SETTING_KEYS];
+    for (const key of keys) expect(documentsKey(text, key), key).toBe(true);
+    // The nested blocks, by their full path.
+    for (const key of GATE_KEYS) expect(codeSpans(text), `gate.${key}`).toContain(`gate.${key}`);
+    for (const key of DEPRECATED_KEYS) expect(codeSpans(text), `deprecated.${key}`).toContain(`deprecated.${key}`);
+  });
+
+  it('does not count a key that appears only inside some other span', () => {
+    expect(documentsKey('a `/path` and `wph mount`', 'path')).toBe(false);
+    expect(documentsKey('`a` path `b`', 'path')).toBe(false);
+    expect(documentsKey('`settings[].submit` and `{url, allow}`', 'submit')).toBe(true);
+    expect(documentsKey('`{url, allow, deny}`', 'allow')).toBe(true);
   });
 
   it('names all six actors', async () => {
@@ -208,5 +241,18 @@ describe('the Node floor (R103)', () => {
       }
     }
     expect(stated).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('the variable names (R103)', () => {
+  it('are read only through their named constants, so the checks above see a rename', async () => {
+    const ROOT = join(skillsRoot(), '..');
+    const files = ['bin/wpj.js', 'src/config.ts', 'src/runner/cli.ts', 'src/mcp/server.ts', 'src/commands/skills.ts'];
+    for (const file of files) {
+      const text = await read(join(ROOT, file));
+      // WPJ_PLUGIN_DIR is the retired name, read only to refuse it.
+      const literal = [...text.matchAll(/env\s*(?:\.|\[\s*['"`])(WPJ_\w+|HOME)\b/g)].map((m) => m[1]).filter((n) => n !== 'WPJ_PLUGIN_DIR');
+      expect(literal, file).toEqual([]);
+    }
   });
 });

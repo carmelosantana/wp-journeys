@@ -23,7 +23,7 @@ import type { Browser } from '@playwright/test';
 import { ALL_ACTORS, isAnonymous, type Actor } from '../actors/roles.ts';
 import { createAgentClient } from '../agent/client.ts';
 import type { AgentClient } from '../agent/client.ts';
-import { loadConfig } from '../config.ts';
+import { loadConfig, SECRET_VAR } from '../config.ts';
 import type { Config } from '../config.ts';
 import { projectSurface } from '../discovery/surface.ts';
 import { messageOf, redactSecret } from '../errors.ts';
@@ -32,7 +32,7 @@ import { openActorSession, type ActorSession } from '../journeys/support.ts';
 import { BODY_TIMEOUT_MS } from '../manifest/interpret.ts';
 import { plural, renderFinding, renderJourney } from '../report/summary.ts';
 import { launchChromium } from '../runner/browser.ts';
-import { manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape } from '../runner/cli.ts';
+import { manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape, WP_VAR } from '../runner/cli.ts';
 import { redactLoginToken } from '../sentinel/classify.ts';
 import type { Finding } from '../sentinel/phplog.ts';
 import { isSitePath } from '../site-path.ts';
@@ -131,7 +131,7 @@ export function createMcpServer(deps: McpDeps) {
    * rather than a property of today's messages.
    */
   function outbound(text: string): string {
-    return redactLoginToken(redactSecret(text, deps.env.WPJ_AGENT_SECRET));
+    return redactLoginToken(redactSecret(text, deps.env[SECRET_VAR]));
   }
 
   /** The loader `wpj run` uses; its message is the tool's error when configuration is broken (R89). */
@@ -197,8 +197,8 @@ export function createMcpServer(deps: McpDeps) {
     if (!parsed.ok) throw new Error(parsed.reason);
 
     const { cfg, agent } = configured();
-    const wp = deps.env.WPJ_WP;
-    if (!wp) throw new Error('WPJ_WP is not set — the runner needs a wp-cli command to toggle the plugin.');
+    const wp = deps.env[WP_VAR];
+    if (!wp) throw new Error(`${WP_VAR} is not set — the runner needs a wp-cli command to toggle the plugin.`);
 
     // Everything below that refuses does so BEFORE the baseline touches the site.
     const plan = await manifestPlan(deps.env, plugin);
@@ -453,7 +453,7 @@ export async function serve(
       await server.shutdown();
     } catch (error) {
       // Diagnostics go to stderr, never to the protocol stream (R90).
-      process.stderr.write(`wpj mcp: shutdown failed: ${redactLoginToken(redactSecret(messageOf(error), deps.env.WPJ_AGENT_SECRET))}\n`);
+      process.stderr.write(`wpj mcp: shutdown failed: ${redactLoginToken(redactSecret(messageOf(error), deps.env[SECRET_VAR]))}\n`);
     } finally {
       diverted?.restore();
     }
