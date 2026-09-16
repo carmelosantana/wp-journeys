@@ -355,7 +355,11 @@ describe('login_as (R84, R85, R87)', () => {
 
     const { text, isError } = await call(server, 'login_as', { actor: 'editor' });
 
-    expect(isError).toBe(false);
+    // R95d: the result CARRIES findings, so it is an error to a client that reads only isError —
+    // while the text still says the login itself succeeded.
+    expect(isError).toBe(true);
+    expect(text).toMatch(/^session open as editor \(authenticated\), sentinel armed$/m);
+    expect(text).toMatch(/this call succeeded; isError is set because it carries the previous session's findings/);
     expect(text).toMatch(/previous session \(anonymous\)[^\n]*1 finding/);
     expect(text).toMatch(/\[response\] navigation to .* returned HTTP 502/);
     expect(text).not.toContain(TOKEN);
@@ -368,9 +372,11 @@ describe('login_as (R84, R85, R87)', () => {
     const server = createMcpServer(h.deps);
     await call(server, 'login_as', { actor: 'anonymous' });
 
-    const { text } = await call(server, 'login_as', { actor: 'anonymous' });
+    const { text, isError } = await call(server, 'login_as', { actor: 'anonymous' });
 
     expect(text).toMatch(/previous session \(anonymous\)[^\n]*no findings/);
+    expect(isError).toBe(false);
+    expect(text).not.toMatch(/isError is set/);
     await server.shutdown();
   });
 
@@ -767,12 +773,40 @@ describe('run_journey (R88)', () => {
 
     const { text, isError } = await call(server, 'run_journey', { name: 'frontend-renders', plugin: 'acme' });
 
-    expect(isError).toBe(false);
+    // R95d: a passing journey that carries the held session's findings is still an error result.
+    expect(isError).toBe(true);
     expect(text).toMatch(/^outcome: pass$/m);
+    expect(text).toMatch(/this call succeeded; isError is set because it carries the previous session's findings/);
     expect(text).toMatch(/previous session \(anonymous\)[^\n]*1 finding/);
     expect(text).toMatch(/HTTP 502/);
     expect(heldClosedAtShell).toEqual([true, true]);
     expect((await call(server, 'drain_sentinel')).text).toMatch(/call login_as first/);
+  });
+
+  it('is not an error when the retired session was clean and the journey passed (R95d)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+
+    const { text, isError } = await call(server, 'run_journey', { name: 'frontend-renders', plugin: 'acme' });
+
+    expect(isError).toBe(false);
+    expect(text).toMatch(/^outcome: pass$/m);
+    expect(text).toMatch(/previous session \(anonymous\)[^\n]*no findings/);
+  });
+
+  it('is an error when a SKIPPED journey carries the retired session\'s findings (R95d)', async () => {
+    const h = harness({ agent: { discover: async () => ({ ...RAW, menu: [], pluginPages: [] }) } });
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    h.page.navigations = [() => response(502, 'https://s.test/held')];
+    await call(server, 'navigate', { path: '/held' });
+
+    const { text, isError } = await call(server, 'run_journey', { name: 'admin-sweep:acme:subscriber', plugin: 'acme' });
+
+    expect(isError).toBe(true);
+    expect(text).toMatch(/^outcome: skip$/m);
+    expect(text).toMatch(/previous session \(anonymous\)[^\n]*1 finding/);
   });
 
   it('reports the retired session\'s findings on a refusal too (M4)', async () => {

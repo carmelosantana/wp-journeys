@@ -91,6 +91,29 @@ function findingLines(findings: readonly Finding[]): string[] {
   return findings.map(renderFinding);
 }
 
+/** What retiring a held session produced: its labelled lines, and how many findings they carry. */
+interface Retired {
+  lines: string[];
+  findings: number;
+}
+
+const NOTHING_RETIRED: Retired = { lines: [], findings: 0 };
+
+/**
+ * A result with a retired session's lines attached (R85). A result that CARRIES findings is an
+ * error to a client that reads only `isError` (R95d) — never ok while findings exist — and when
+ * the call itself succeeded, the text says that is the only reason.
+ */
+function carrying(previous: Retired, result: ToolResult): ToolResult {
+  if (previous.findings === 0) {
+    return { ...result, text: [result.text, ...previous.lines].join('\n') };
+  }
+  const why = result.isError
+    ? []
+    : ["this call succeeded; isError is set because it carries the previous session's findings"];
+  return { isError: true, text: [result.text, ...why, ...previous.lines].join('\n') };
+}
+
 /** No session to act on: said the same way by every tool that needs one (R85). */
 const NO_SESSION: ToolResult = {
   text: 'no browser session is open — call login_as first', isError: true,
@@ -145,8 +168,8 @@ export function createMcpServer(deps: McpDeps) {
    * Drain the held session, THEN close it, and say what it saw (R85). Never silent: a clean
    * session says so, and so does one whose context would not close.
    */
-  async function retire(): Promise<string[]> {
-    if (current === null) return [];
+  async function retire(): Promise<Retired> {
+    if (current === null) return NOTHING_RETIRED;
     const session = current;
     current = null;
     const findings = await session.drain();
@@ -159,7 +182,7 @@ export function createMcpServer(deps: McpDeps) {
     } catch (error) {
       lines.push(`previous session (${session.actor})'s browser context could not be closed: ${messageOf(error)}`);
     }
-    return lines;
+    return { lines, findings: findings.length };
   }
 
   /** One journey, run as `wpj run` would run it (R88). The caller has already retired any session. */
@@ -236,17 +259,17 @@ export function createMcpServer(deps: McpDeps) {
       } catch (error) {
         // The previous session is already drained and closed: its findings exist only here now,
         // so a throw must not take them with it (C1, R85).
-        return { isError: true, text: [`could not open a session as ${actor}: ${messageOf(error)}`, ...previous].join('\n') };
+        return carrying(previous, { isError: true, text: `could not open a session as ${actor}: ${messageOf(error)}` });
       }
       if (!opened.ok) {
-        return {
+        return carrying(previous, {
           isError: true,
-          text: [`could not open a session as ${actor}:`, ...findingLines(opened.findings), ...previous].join('\n'),
-        };
+          text: [`could not open a session as ${actor}:`, ...findingLines(opened.findings)].join('\n'),
+        });
       }
       current = opened.session;
       const how = isAnonymous(actor as Actor) ? 'anonymous: no login' : 'authenticated';
-      return { text: [`session open as ${actor} (${how}), sentinel armed`, ...previous].join('\n') };
+      return carrying(previous, { text: `session open as ${actor} (${how}), sentinel armed` });
     },
 
     async navigate(args) {
@@ -303,7 +326,7 @@ export function createMcpServer(deps: McpDeps) {
       } catch (error) {
         result = { isError: true, text: messageOf(error) };
       }
-      return { ...result, text: [result.text, ...previous].join('\n') };
+      return carrying(previous, result);
     },
   };
 
