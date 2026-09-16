@@ -12,7 +12,7 @@ import type { Page } from '@playwright/test';
 import type { AgentClient } from '../agent/client.ts';
 import {
   BENIGN_NETWORK, classifyConsole, classifyNavigation, classifyPhpLogLine, classifyRequestFailed,
-  classifyResponse, scanBody, type Expectation, type Finding,
+  classifyResponse, redactLoginToken, scanBody, type Expectation, type Finding,
 } from './classify.ts';
 
 /**
@@ -200,8 +200,11 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
     } catch (error) {
       // A body that cannot be read is a lost signal, not a clean one — and losing it must not
       // cost the log signal too, so this is recorded and the caller carries on.
+      const where = currentUrl();
       findings.push({
-        kind: 'bodyscan', url: currentUrl(),
+        // Redacted like every other finding: the page may be sitting on the minted login URL
+        // when it becomes unreadable (R51).
+        kind: 'bodyscan', url: where === undefined ? undefined : redactLoginToken(where),
         text: `the page body could not be read to scan it (${String(error)}) — a PHP diagnostic printed into the response would go unseen`,
       });
       return;
@@ -295,9 +298,11 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
       if (!response) {
         // Playwright returns null when the navigation produced no response at all. Asserting
         // nothing here would let the journey continue against an unknown document.
+        // Built from the REQUESTED url, which at the login step IS the token URL (R51).
+        const safe = redactLoginToken(url);
         findings.push({
-          kind: 'response', url,
-          text: `navigation to ${url} produced no response to assert — the document's status could not be read`,
+          kind: 'response', url: safe,
+          text: `navigation to ${safe} produced no response to assert — the document's status could not be read`,
         });
         // No document arrived, so there is nothing to settle or scan: waiting for networkidle
         // would only burn the full Playwright timeout before failing.

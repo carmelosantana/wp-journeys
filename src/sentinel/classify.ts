@@ -31,6 +31,21 @@ export interface Expectation {
 export const BENIGN_NETWORK = /net::(ERR_NETWORK_CHANGED|ERR_NETWORK_IO_SUSPENDED|ERR_INTERNET_DISCONNECTED)/;
 
 /**
+ * Strip a minted login token out of anything that will be shown, stored or logged (R51).
+ *
+ * The runner authenticates an actor by navigating to `?wpj_login=<token>`, so that URL is what
+ * a login-step finding gets built from — and findings flow into `JourneyResult`, the run
+ * summary, a Playwright trace and whatever CI keeps. The token is single-use and expires in
+ * five minutes, but a credential written into a log is a credential written into a log.
+ *
+ * Applied where findings are BUILT, not where they are printed: otherwise every consumer of a
+ * finding would have to remember, and one of them would not.
+ */
+export function redactLoginToken(url: string): string {
+  return url.replace(/([?&]wpj_login=)[^&#\s]*/gi, '$1<REDACTED>');
+}
+
+/**
  * Subresource policy: lenient, and deliberately expectation-free (R1).
  *
  * This runs for EVERY response on the page, so it cannot know what the journey expected of any
@@ -41,7 +56,8 @@ export const BENIGN_NETWORK = /net::(ERR_NETWORK_CHANGED|ERR_NETWORK_IO_SUSPENDE
  */
 export function classifyResponse(status: number, url: string): Finding | null {
   if (status >= 500) {
-    return { kind: 'response', status, url, text: `HTTP ${status} response from ${url}` };
+    const safe = redactLoginToken(url);
+    return { kind: 'response', status, url: safe, text: `HTTP ${status} response from ${safe}` };
   }
   return null;
 }
@@ -77,23 +93,25 @@ function isLoginPage(url: string): boolean {
  */
 export function classifyNavigation(status: number, url: string, expect: Expectation): Finding | null {
   const login = isLoginPage(url);
+  // The judgement is made on the real URL; only what the finding CARRIES is redacted (R51).
+  const safe = redactLoginToken(url);
   if (expect.denyExpected) {
     if (status === 401 || status === 403 || login) return null;
     return {
-      kind: 'response', status, url,
-      text: `expected a permission denial at ${url} but the document returned HTTP ${status}`,
+      kind: 'response', status, url: safe,
+      text: `expected a permission denial at ${safe} but the document returned HTTP ${status}`,
     };
   }
   if (login) {
     return {
-      kind: 'response', status, url,
-      text: `redirected to the login page at ${url} — the actor is not authenticated`,
+      kind: 'response', status, url: safe,
+      text: `redirected to the login page at ${safe} — the actor is not authenticated`,
     };
   }
   if (status >= 200 && status < 300) return null;
   return {
-    kind: 'response', status, url,
-    text: `navigation to ${url} returned HTTP ${status} — the journey required a document it could act on`,
+    kind: 'response', status, url: safe,
+    text: `navigation to ${safe} returned HTTP ${status} — the journey required a document it could act on`,
   };
 }
 
@@ -109,7 +127,12 @@ export function classifyConsole(type: string, text = '', url = ''): Finding | nu
   if (BENIGN_NETWORK.test(text)) return null;
   const echo = text.match(/Failed to load resource: the server responded with a status of (\d{3})\b/);
   if (echo && Number(echo[1]) < 500) return null;
-  return { kind: 'console', url: url || undefined, text: `console.error: ${text || '<empty>'}` };
+  return {
+    kind: 'console',
+    url: url ? redactLoginToken(url) : undefined,
+    // Chromium puts the failing resource's URL inside the message text as well.
+    text: `console.error: ${text ? redactLoginToken(text) : '<empty>'}`,
+  };
 }
 
 /**
@@ -119,9 +142,10 @@ export function classifyConsole(type: string, text = '', url = ''): Finding | nu
 export function classifyRequestFailed(url = '', failure = '', hasResponse = false): Finding | null {
   if (hasResponse) return null;
   if (BENIGN_NETWORK.test(failure)) return null;
+  const safe = url ? redactLoginToken(url) : '';
   return {
-    kind: 'requestfailed', url: url || undefined,
-    text: `request failed: ${failure || 'unknown failure'} for ${url || '<unknown url>'}`,
+    kind: 'requestfailed', url: safe || undefined,
+    text: `request failed: ${failure || 'unknown failure'} for ${safe || '<unknown url>'}`,
   };
 }
 
@@ -162,8 +186,9 @@ export function scanBody(body: string, url: string): Finding | null {
   const hit = BODY_DIAGNOSTIC.exec(body);
   if (!hit) return null;
   const severity = new RegExp(`(${SEVERITY})`).exec(hit[0])?.[1] ?? 'diagnostic';
+  const safe = redactLoginToken(url);
   return {
-    kind: 'bodyscan', url,
-    text: `PHP ${severity} printed into the response body at ${url}`,
+    kind: 'bodyscan', url: safe,
+    text: `PHP ${severity} printed into the response body at ${safe}`,
   };
 }

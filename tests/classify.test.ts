@@ -81,6 +81,35 @@ describe('classifyNavigation', () => {
   });
 });
 
+describe('a minted login token never reaches a finding (R51)', () => {
+  // The runner navigates to `?wpj_login=<token>` to authenticate an actor. Any finding built
+  // from that URL carries a live credential into JourneyResult, the summary and CI logs.
+  const TOKEN_URL = 'https://s.test/?wpj_login=SECRETTOKENabcdef0123456789abcd';
+
+  it('redacts the token from a navigation finding', () => {
+    const finding = classifyNavigation(502, TOKEN_URL, allowed);
+    expect(JSON.stringify(finding)).not.toContain('SECRETTOKEN');
+    expect(finding?.url).toBe('https://s.test/?wpj_login=<REDACTED>');
+  });
+
+  it('redacts the token from a 5xx response finding', () => {
+    const finding = classifyResponse(500, TOKEN_URL);
+    expect(JSON.stringify(finding)).not.toContain('SECRETTOKEN');
+  });
+
+  it('redacts the token from a failed-request and a body-scan finding', () => {
+    expect(JSON.stringify(classifyRequestFailed(TOKEN_URL, 'net::ERR_CONNECTION_REFUSED', false)))
+      .not.toContain('SECRETTOKEN');
+    expect(JSON.stringify(scanBody('Fatal error: Uncaught Error: boom', TOKEN_URL)))
+      .not.toContain('SECRETTOKEN');
+  });
+
+  it('leaves an ordinary query string alone', () => {
+    expect(classifyNavigation(404, 'https://s.test/?page_id=2&preview=true', allowed)?.url)
+      .toBe('https://s.test/?page_id=2&preview=true');
+  });
+});
+
 describe('classifyConsole', () => {
   it('flags a genuine console error', () => {
     expect(classifyConsole('error', 'Uncaught TypeError: x is not a function')?.kind).toBe('console');

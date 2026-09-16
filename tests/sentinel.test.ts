@@ -204,6 +204,19 @@ describe('sentinel.visit', () => {
     expect(finding?.url).toBe('https://s.test/wp-admin/');
   });
 
+  it('redacts a minted login token from the finding it builds for a responseless navigation', async () => {
+    // This finding is built from the REQUESTED url, which at the login step IS the token URL —
+    // and findings flow into JourneyResult, the run summary and whatever CI keeps (R51).
+    const { page, sentinel } = await setup();
+    page.navigations = [() => null];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/?wpj_login=SECRETTOKENabcdef0123456789abcd');
+
+    const findings = await sentinel.drain();
+    expect(JSON.stringify(findings)).not.toContain('SECRETTOKEN');
+    expect(findings[0]?.url).toBe('https://s.test/?wpj_login=<REDACTED>');
+  });
+
   it('refuses a page it was not installed on, whose three live listeners are not attached', async () => {
     const { sentinel } = await setup();
     const stranger = new FakePage();
