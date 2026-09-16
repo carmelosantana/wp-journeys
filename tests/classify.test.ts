@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  classifyConsole, classifyNavigation, classifyRequestFailed, classifyResponse, redactLoginToken, scanBody,
+  LOGIN_TOKEN_PARAM, classifyConsole, classifyNavigation, classifyRequestFailed, classifyResponse, containsLoginToken,
+  redactLoginToken, scanBody,
 } from '../src/sentinel/classify.ts';
 
 const allowed = { denyExpected: false };
@@ -365,5 +366,36 @@ describe('redactLoginToken, percent-encoded (M2)', () => {
   it('still redacts the plain form, and leaves an unrelated encoded parameter alone', () => {
     expect(redactLoginToken('https://s.test/?wpj_login=TOKEN-4&y=2')).toBe('https://s.test/?wpj_login=<REDACTED>&y=2');
     expect(redactLoginToken('/?redirect_to=%2F%3Fnot_wpj_login%3D1')).toBe('/?redirect_to=%2F%3Fnot_wpj_login%3D1');
+  });
+});
+
+describe('one login-token pattern, every encoding (R95c)', () => {
+  const forms: Array<[string, string, string]> = [
+    ['plain', '/?wpj_login=TOK&y=1', '/?wpj_login=<REDACTED>&y=1'],
+    ['encoded', '/?r=%2F%3Fwpj_login%3DTOK%26y%3D1', '/?r=%2F%3Fwpj_login%3D<REDACTED>%26y%3D1'],
+    ['doubly encoded', '/?r=%252F%253Fwpj_login%253DTOK%2526y%253D1', '/?r=%252F%253Fwpj_login%253D<REDACTED>%2526y%253D1'],
+    ['half-encoded separator', '/?r=%3Fwpj_login=TOK&y=1', '/?r=%3Fwpj_login=<REDACTED>&y=1'],
+    ['half-encoded equals', '/?wpj_login%3DTOK&y=1', '/?wpj_login%3D<REDACTED>&y=1'],
+    ['doubly encoded, lower case', '/?r=%253fWPJ_LOGIN%253dTOK', '/?r=%253fWPJ_LOGIN%253d<REDACTED>'],
+  ];
+
+  for (const [label, raw, redacted] of forms) {
+    it(`redacts the ${label} form, and the leak check sees it before but not after`, () => {
+      expect(redactLoginToken(raw)).toBe(redacted);
+      expect(containsLoginToken(raw)).toBe(true);
+      expect(containsLoginToken(redacted)).toBe(false);
+    });
+  }
+
+  it('does not over-redact a parameter that only resembles the token', () => {
+    for (const text of ['/?page=wpj_login%3Dx', '/?xwpj_login%3D1', '/?r=%26wpj_loginx%3D1', '/?wpj_loginx=1', '/?a=1%2526xwpj_login%253D1']) {
+      expect(redactLoginToken(text), text).toBe(text);
+      expect(containsLoginToken(text), text).toBe(false);
+    }
+  });
+
+  it('is exported as one case-insensitive pattern, the one both uses are built from', () => {
+    expect(LOGIN_TOKEN_PARAM.flags).toContain('i');
+    expect(LOGIN_TOKEN_PARAM.test('%253FWPJ_LOGIN%253D')).toBe(true);
   });
 });

@@ -31,6 +31,21 @@ export interface Expectation {
 export const BENIGN_NETWORK = /net::(ERR_NETWORK_CHANGED|ERR_NETWORK_IO_SUSPENDED|ERR_INTERNET_DISCONNECTED)/;
 
 /**
+ * The login-token parameter's NAME, in every spelling a URL can carry it (R95c): plain, percent-
+ * encoded (a login bounce carries the token URL inside `redirect_to`, where `?` `=` `&` arrive as
+ * %3F %3D %26), encoded again (%253F…), or only half-encoded. The separator must come directly
+ * before the name and `=` directly after, so `?page=wpj_login%3Dx` and `?xwpj_login=1` are not it.
+ *
+ * The ONE definition: the redactor and the live proof's leak check are both built from it.
+ */
+export const LOGIN_TOKEN_PARAM = /(?:[?&]|%(?:25)*3F|%(?:25)*26)wpj_login(?:=|%(?:25)*3D)/i;
+
+/** The parameter and its value. The value ends at `&`, `#`, whitespace, or an encoded `&`. */
+const TOKEN_WITH_VALUE = new RegExp(`(${LOGIN_TOKEN_PARAM.source})(?:(?!%(?:25)*26)[^&#\\s])*`, 'gi');
+
+const UNREDACTED_TOKEN = new RegExp(`${LOGIN_TOKEN_PARAM.source}(?!<REDACTED>)`, 'i');
+
+/**
  * Strip a minted login token out of anything that will be shown, stored or logged (R51).
  *
  * The runner authenticates an actor by navigating to `?wpj_login=<token>`, so that URL is what
@@ -42,11 +57,12 @@ export const BENIGN_NETWORK = /net::(ERR_NETWORK_CHANGED|ERR_NETWORK_IO_SUSPENDE
  * finding would have to remember, and one of them would not.
  */
 export function redactLoginToken(url: string): string {
-  return url
-    .replace(/([?&]wpj_login=)[^&#\s]*/gi, '$1<REDACTED>')
-    // Percent-encoded too (M2): a login bounce carries the token URL inside `redirect_to`, where
-    // `?` `=` `&` arrive as %3F %3D %26. The value ends at the next encoded `&`, or a raw one.
-    .replace(/((?:%3F|%26)wpj_login%3D)(?:(?!%26)[^&#\s])*/gi, '$1<REDACTED>');
+  return url.replace(TOKEN_WITH_VALUE, '$1<REDACTED>');
+}
+
+/** Whether text still carries a login token that was not redacted, in any spelling. */
+export function containsLoginToken(text: string): boolean {
+  return UNREDACTED_TOKEN.test(text);
 }
 
 /**

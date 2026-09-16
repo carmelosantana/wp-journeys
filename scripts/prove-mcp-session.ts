@@ -23,6 +23,8 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
+import { containsLoginToken } from '../src/sentinel/classify.ts';
+
 /** The ONE site this may drive. */
 const TARGET_HOST = 'wpjtest.wp.test';
 
@@ -66,8 +68,8 @@ const failures: string[] = [];
 /** Never print a frame that carries a live token or the secret — say so instead. */
 function leakIn(raw: string): string | null {
   if (secret.length > 0 && raw.includes(secret)) return 'the shared secret';
-  // Plain and percent-encoded (a token inside `redirect_to`).
-  if (/(?:[?&]|%3F|%26)wpj_login(?:=|%3D)(?!<REDACTED>)/i.test(raw)) return 'an unredacted login token';
+  // The runner's own pattern, in every encoding (R95c) — not a copy of it.
+  if (containsLoginToken(raw)) return 'an unredacted login token';
   return null;
 }
 
