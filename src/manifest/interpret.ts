@@ -22,27 +22,38 @@
  * an anonymous visitor: a refused, bounced or sessionless login fails before the first screen.
  */
 import { randomBytes } from 'node:crypto';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { Page } from '@playwright/test';
 
 import { isAnonymous } from '../actors/roles.ts';
+import { shortcodeRenderDefect, shortcodeRenderUrl } from '../agent/render.ts';
 import { messageOf } from '../errors.ts';
-import type { Journey } from '../journeys/index.ts';
+import type { Journey, JourneyResult } from '../journeys/index.ts';
 import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
-import { shortcodeRenderDefect, shortcodeRenderUrl } from '../suite/rendered-surface.ts';
 import type { Manifest, ManifestJourney } from './schema.ts';
 
 /**
  * Load the escape-hatch module and return its Journey, or throw naming the journey and the
  * module. Resolved against the PLUGIN directory (R8): a relative path passed straight to
  * `import()` would resolve against this file's own URL, not the plugin's.
+ *
+ * And confined to it. The hatch runs author code by design, but a manifest is data from the
+ * plugin under test, and `resolve` would happily follow `../` into a sibling checkout or take
+ * an absolute path to any file on the machine.
  */
 async function loadModule(entry: ManifestJourney, module: string, pluginDir: string): Promise<Journey> {
+  const root = resolve(pluginDir);
+  const target = resolve(root, module);
+  const inside = relative(root, target);
+  if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) {
+    throw new Error(`journey "${entry.name}": module "${module}" resolves outside the plugin directory ${root}`);
+  }
+
   let loaded: { default?: unknown };
   try {
-    loaded = (await import(pathToFileURL(resolve(pluginDir, module)).href)) as { default?: unknown };
+    loaded = (await import(pathToFileURL(target).href)) as { default?: unknown };
   } catch (error) {
     throw new Error(`journey "${entry.name}": could not load module "${module}" — ${messageOf(error)}`);
   }
@@ -51,6 +62,36 @@ async function loadModule(entry: ManifestJourney, module: string, pluginDir: str
     throw new Error(`journey "${entry.name}": module "${module}" does not default-export a Journey`);
   }
   return journey as Journey;
+}
+
+/**
+ * The module's result, checked for shape and re-labelled with the MANIFEST's identity.
+ *
+ * The summary must list what the manifest named: a journey the author called `acme-custom`
+ * would otherwise appear under whatever the module called itself. And a malformed result must
+ * fail THIS journey here — unchecked, it reaches `outcomeOf`, which throws on a half-declared
+ * skip and aborts the whole summary rather than one row.
+ */
+function asManifestResult(entry: ManifestJourney, module: string, raw: unknown): JourneyResult {
+  const refuse = (why: string): never => {
+    throw new Error(
+      `journey "${entry.name}": module "${module}" returned something that is not a JourneyResult — ${why}`,
+    );
+  };
+  if (typeof raw !== 'object' || raw === null) return refuse(`got ${typeof raw}`);
+  const result = raw as Partial<JourneyResult>;
+  if (!Array.isArray(result.findings)) return refuse('"findings" is not an array');
+  if (typeof result.entitiesCreated !== 'number') return refuse('"entitiesCreated" is not a number');
+  if (result.skipReason !== undefined && result.skipped !== true) {
+    return refuse('"skipReason" is set without "skipped: true", which would render as a pass');
+  }
+  const relabelled: JourneyResult = {
+    name: entry.name, actor: entry.actor, surface: entry.surface,
+    entitiesCreated: result.entitiesCreated, findings: result.findings,
+  };
+  if (result.skipped !== undefined) relabelled.skipped = result.skipped;
+  if (result.skipReason !== undefined) relabelled.skipReason = result.skipReason;
+  return relabelled;
 }
 
 /** A suffix no earlier run, and no earlier write in this run, can have left on the site. */
@@ -75,7 +116,7 @@ function journeyFor(entry: ManifestJourney, pluginDir: string, nonce: () => stri
     run: async (browser, cfg, agent) => {
       if (entry.module !== undefined) {
         const loaded = await loadModule(entry, entry.module, pluginDir);
-        return loaded.run(browser, cfg, agent);
+        return asManifestResult(entry, entry.module, await loaded.run(browser, cfg, agent));
       }
       return runAsActor(browser, cfg, agent, entry.name, entry.actor, entry.surface, async (page, sentinel) => {
         // The control visit (R67): one screen this actor MUST be served, before any step. A

@@ -53,7 +53,8 @@ export interface Manifest {
 
 const SURFACES: readonly SurfaceAxis[] = ['admin', 'frontend', 'both'];
 
-const MANIFEST_KEYS = ['version', 'plugin', 'gate', 'journeys'];
+/** `$schema` is for editor completion and `description` stands in for the comments JSON lacks. */
+const MANIFEST_KEYS = ['$schema', 'description', 'version', 'plugin', 'gate', 'journeys'];
 const GATE_KEYS = ['screen'];
 const JOURNEY_KEYS = ['name', 'actor', 'surface', 'screens', 'settings', 'shortcodes', 'module'];
 const SCREEN_KEYS = ['url', 'allow', 'deny'];
@@ -146,14 +147,15 @@ function parseJourney(raw: unknown, index: number, fail: Fail): ManifestJourney 
   if (module !== undefined && !isNonEmptyString(module)) failNamed('"module" must be a non-empty string');
 
   const steps = (screens?.length ?? 0) + (settings?.length ?? 0) + (shortcodes?.length ?? 0);
+  const declaresSteps = screens !== undefined || settings !== undefined || shortcodes !== undefined;
+  if (declaresSteps && module !== undefined) {
+    // The module REPLACES the interpreted steps. Accepting both would run the module and drop
+    // the steps without a word — an EMPTY list included: the author wrote the key.
+    failNamed('"module" cannot be combined with screens, settings or shortcodes — the module replaces them');
+  }
   if (steps === 0 && module === undefined) {
     // Reached by an absent list AND by an empty one: `screens: []` is not work either.
     fail(`journey "${name}" declares no screens, settings, shortcodes or module — it would do nothing`);
-  }
-  if (steps > 0 && module !== undefined) {
-    // The module REPLACES the interpreted steps. Accepting both would run the module and drop
-    // the steps without a word.
-    failNamed('"module" cannot be combined with screens, settings or shortcodes — the module replaces them');
   }
 
   const journey: ManifestJourney = { name, actor, surface: surface as SurfaceAxis };

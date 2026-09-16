@@ -3,6 +3,7 @@
  * matrix; and render every shortcode it added on the frontend.
  */
 import { Actor, isAnonymous } from '../actors/roles.ts';
+import { shortcodeRenderDefect, shortcodeRenderUrl } from '../agent/render.ts';
 import type { Surface } from '../discovery/types.ts';
 import type { Journey, JourneyResult, SurfaceAxis } from '../journeys/index.ts';
 import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
@@ -81,37 +82,12 @@ export function adminSweep(plugin: string, delta: Surface, actor: Actor): Journe
   };
 }
 
-/** The frontend URL that renders `[tag]` through the agent's render endpoint. */
-export function shortcodeRenderUrl(tag: string): string {
-  return `/?wpj_render=${encodeURIComponent(`[${tag}]`)}`;
-}
-
 /**
- * Why a render of `[tag]` proved nothing, or `null` when it expanded.
+ * Render every shortcode the plugin added, on the front end, as an administrator.
  *
- * The render itself is not the assertion (R5). If the agent's guard refused, `?wpj_render=`
- * serves the ordinary home page with a perfectly good 200 and the journey would pass having
- * rendered nothing at all. So each tag is proven twice over:
- *  - `[data-wpj-render]` is present, which only the agent's endpoint emits — the proof it ran;
- *  - the literal `[tag]` is gone, which is the proof the shortcode EXPANDED. WordPress returns
- *    an unregistered shortcode verbatim, so a tag that never registered reads as its own text.
- *
- * Pure, and shared with the manifest interpreter so a manifest's shortcodes are held to the
- * same proof as the discovered ones.
+ * The render itself is not the assertion (R5): `shortcodeRenderDefect` is what proves the
+ * endpoint ran and the tag expanded.
  */
-export function shortcodeRenderDefect(html: string, tag: string): string | null {
-  if (!html.includes('data-wpj-render')) {
-    return `rendering [${tag}] produced no wp-journeys render marker — the agent's render `
-      + 'endpoint did not run, so nothing about this shortcode was actually asserted';
-  }
-  if (html.includes(`[${tag}]`)) {
-    return `the shortcode [${tag}] came back verbatim — WordPress returns an unregistered `
-      + 'shortcode unchanged, so it never expanded';
-  }
-  return null;
-}
-
-/** Render every shortcode the plugin added, on the front end, as an administrator. */
 export function shortcodeRender(plugin: string, delta: Surface): Journey {
   const name = `shortcode-render:${plugin}`;
   return {

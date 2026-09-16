@@ -5,7 +5,8 @@
  * be, a permission problem — is an author who WROTE a manifest and would otherwise have none
  * of it run, silently, which is the false green this file exists to refuse.
  */
-import { readFile } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { messageOf } from '../errors.ts';
@@ -18,6 +19,16 @@ function isMissing(error: unknown): boolean {
 }
 
 export async function loadManifest(pluginDir: string): Promise<Manifest | null> {
+  // The DIRECTORY first: readFile answers ENOENT for a missing directory exactly as for a
+  // missing file, and a mistyped plugin path would otherwise read as "no manifest".
+  let directory: Stats;
+  try {
+    directory = await stat(pluginDir);
+  } catch (error) {
+    throw new Error(`${pluginDir}: plugin directory does not exist — ${messageOf(error)}`);
+  }
+  if (!directory.isDirectory()) throw new Error(`${pluginDir}: plugin directory is not a directory`);
+
   const file = join(pluginDir, MANIFEST_FILE);
   let text: string;
   try {

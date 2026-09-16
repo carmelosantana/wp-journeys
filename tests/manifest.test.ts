@@ -89,6 +89,19 @@ describe('parseManifest', () => {
       .toThrow(/journey "acme-settings-round-trip": "module" cannot be combined with screens, settings or shortcodes/);
   });
 
+  it('rejects a module combined with an EMPTY step list too — the rule is about the keys, not the count', () => {
+    const bad = withJourney({ name: 'm', actor: 'editor', surface: 'admin', module: 'x.ts', screens: [] });
+    expect(() => parseManifest(bad, 'f.json'))
+      .toThrow(/journey "m": "module" cannot be combined with screens, settings or shortcodes/);
+  });
+
+  it('accepts "$schema" and "description" at the top level', () => {
+    // Editors want `$schema` for completion, and JSON has no comments — these are the one
+    // place the strictness would refuse a legitimate manifest.
+    const annotated = { $schema: 'https://example.test/wp-journeys.schema.json', description: 'Acme journeys', ...valid };
+    expect(parseManifest(annotated, 'f.json').plugin).toBe('acme');
+  });
+
   describe('unknown keys are refused, naming the key and where it is', () => {
     // A typo — `readback` for `readBack`, `screen` for `screens` — must not be quietly dropped.
     it('at the top level', () => {
@@ -504,6 +517,34 @@ describe('interpret', () => {
       await expect(run()).rejects.toThrow(/journey "gone": could not load module "tests\/fixtures\/journeys\/gone\.ts"/);
     });
 
+    it('reports the result under the MANIFEST identity, validated, not the module\'s own', async () => {
+      // The summary lists what the manifest named. echo.ts calls itself "echo"/administrator/both;
+      // the entry says otherwise, and the entry wins. Its findings and count are the module's.
+      const { run } = arrange({ name: 'custom', actor: 'editor', surface: 'admin', module: 'tests/fixtures/journeys/echo.ts' }, repo);
+
+      const result = await run();
+
+      expect(result).toEqual({
+        name: 'custom', actor: 'editor', surface: 'admin', entitiesCreated: 3,
+        findings: [{ kind: 'assertion', text: 'echo module ran' }],
+      });
+    });
+
+    it('fails by name when the module result is not a JourneyResult, instead of reaching outcomeOf', async () => {
+      const { run } = arrange({ name: 'bad', actor: 'editor', surface: 'admin', module: 'tests/fixtures/journeys/malformed.ts' }, repo);
+
+      await expect(run()).rejects.toThrow(/journey "bad": module "tests\/fixtures\/journeys\/malformed\.ts" returned something that is not a JourneyResult/);
+    });
+
+    it('refuses a module path that resolves outside the plugin directory', async () => {
+      // A manifest is data from the plugin under test. The hatch runs author code by design,
+      // but only the author's own: not ../ into a sibling checkout, not an absolute path.
+      for (const module of ['../outside.ts', '/etc/hostname', 'tests/../../outside.ts']) {
+        const { run } = arrange({ name: 'esc', actor: 'editor', surface: 'admin', module }, repo);
+        await expect(run()).rejects.toThrow(/journey "esc": module ".*" resolves outside the plugin directory/);
+      }
+    });
+
     it('fails when the module default export is not a Journey', async () => {
       const { run } = arrange({ name: 'plain', actor: 'editor', surface: 'admin', module: 'tests/helpers/fakes.ts' }, repo);
 
@@ -550,6 +591,14 @@ describe('loadManifest', () => {
     await writeFile(join(dir, 'wp-journeys.json'), JSON.stringify({ ...valid, version: 2 }));
 
     await expect(loadManifest(dir)).rejects.toThrow(`${join(dir, 'wp-journeys.json')}: "version" must be 1`);
+  });
+
+  it('throws when the plugin directory itself does not exist — that is not "no manifest"', async () => {
+    // readFile answers ENOENT for a missing directory exactly as for a missing file, and a
+    // mistyped plugin path would otherwise run the core suite against nothing, silently.
+    const dir = join(await pluginDir(), 'missing');
+
+    await expect(loadManifest(dir)).rejects.toThrow(`${dir}: plugin directory does not exist`);
   });
 
   it('throws when the manifest exists but cannot be read — only ENOENT is "absent"', async () => {
