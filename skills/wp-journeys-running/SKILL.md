@@ -31,7 +31,10 @@ description: Use when running the wp-journeys conformance suite (`wpj run`, `wpj
 
 ## Before the first run
 
-1. Install the companion mu-plugin, and make sure it refuses unless every gate is open. See [setup](references/setup.md).
+1. Install the companion mu-plugin on a **disposable local site only**. See [setup](references/setup.md).
+
+   > **DEV-ONLY.** Never install the mu-plugin on a production or publicly reachable site. Never set `WP_ENVIRONMENT_TYPE`, `WP_DEBUG` or `WPJ_AGENT` on a site that is not already a disposable local one: together with the secret, those settings are what open the agent. Once it is open, it mints logins for its `wpj_*` users and serves the site's `debug.log`. **The render doors have no credential:** anyone who can reach the site can make it run any registered shortcode (`?wpj_render=[tag]`, no attributes) or render any registered block (`?wpj_render_block=name`), and read the output.
+
 2. **The site must be one where the plugin has never been activated**, and the plugin must be **inactive** at the start. If it was active, `lifecycle` is a visible skip. `wph mount` does not give you this on its own, because it *activates* what it mounts. Deactivate the plugin and delete its state first.
 3. Point the runner at a scratch site. A completed run **uninstalls** the plugin under test (`--skip-delete` keeps the files) and creates the `wpj_*` users.
 

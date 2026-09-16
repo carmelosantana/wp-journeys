@@ -90,6 +90,32 @@ describe('the running skill', () => {
   });
 });
 
+describe('the dev-only warning in the running skill (R103)', () => {
+  /** The same three facts, wherever an agent is told how to open the guard. */
+  function expectWarning(text: string, where: string): void {
+    expect(text, where).toMatch(/DEV-ONLY/);
+    expect(text, where).toMatch(/never install the mu-plugin on a production or publicly reachable site/i);
+    expect(text, where).toMatch(/never set `WP_ENVIRONMENT_TYPE`, `WP_DEBUG` or `WPJ_AGENT` on a site that is not already a disposable local one/i);
+    expect(text, where).toMatch(/render doors have no credential/i);
+  }
+
+  it('warns in SKILL.md, at the step that sends the reader to install it', async () => {
+    const text = await read(join(RUNNING, 'SKILL.md'));
+    const step = text.split('## Before the first run')[1]?.split('\n2. ')[0] ?? '';
+    expectWarning(step, 'SKILL.md step 1');
+  });
+
+  it('warns at the top of setup.md, before any command that opens the guard', async () => {
+    const text = await read(join(RUNNING, 'references', 'setup.md'));
+    // Before the first section, and so before any `config set` or define() the page gives.
+    const top = text.split('\n## ')[0] ?? '';
+    expect(top).not.toMatch(/config set|define\(/);
+    expectWarning(top, 'setup.md top');
+    expect(text).not.toMatch(/any other local WordPress/i);
+    expect(text).toMatch(/## On another disposable local WordPress/);
+  });
+});
+
 describe('the authoring skill', () => {
   it('documents every key the manifest schema accepts', async () => {
     const text = await read(join(AUTHORING, 'SKILL.md'));

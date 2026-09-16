@@ -1,5 +1,7 @@
 # Setting up a target site
 
+> **DEV-ONLY.** Never install the mu-plugin on a production or publicly reachable site. Never set `WP_ENVIRONMENT_TYPE`, `WP_DEBUG` or `WPJ_AGENT` on a site that is not already a disposable local one: together with the secret, those settings are what open the agent. Once it is open, it mints logins for its `wpj_*` users and serves the site's `debug.log`. **The render doors have no credential:** anyone who can reach the site can make it run any registered shortcode (`?wpj_render=[tag]`, no attributes) or render any registered block (`?wpj_render_block=name`), and read the output.
+
 ## The companion mu-plugin
 
 The runner reaches WordPress through a dev-only must-use plugin that **fails closed**. It serves
@@ -22,7 +24,7 @@ WordPress loads only top-level files in `mu-plugins/`, so the agent is two piece
 | the package's `mu-plugin/` directory | `wp-content/mu-plugins/wp-journeys-agent/` |
 | `mu-plugin/loader.php` | `wp-content/mu-plugins/wp-journeys-agent.php` |
 
-### On a wp-harness site
+## On a wp-harness scratch site
 
 ```bash
 WPH="node /path/to/wp-harness/bin/wph.js"   # wph is often not on PATH
@@ -42,10 +44,10 @@ you replace `loader.php` (for example with an editor that writes a new file), th
 keeps running the old copy until the site is stopped and started again. Edits inside the
 mounted **directory** take effect immediately.
 
-### On any other local WordPress
+## On another disposable local WordPress
 
-Copy or symlink the two pieces into place, set the constants, and set `WPJ_WP` to a wp-cli
-command that reaches the site, for example `wp --path=/srv/site` or
+Only on a throwaway local site that nothing else depends on: copy or symlink the two pieces
+into place, set the constants, and set `WPJ_WP` to a wp-cli command that reaches that site, for example `wp --path=/srv/site` or
 `docker compose exec -T cli wp`. The runner runs `$WPJ_WP plugin activate|deactivate <slug>`
 and `$WPJ_WP plugin uninstall <slug> --deactivate --skip-delete` through `sh -c`, and uses
 wp-cli for nothing else.
