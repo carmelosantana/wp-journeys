@@ -182,39 +182,56 @@ export async function openActorSession(
   // One context per session: cookies, storage and the minted session belong to this actor only.
   const context = await browser.newContext({ baseURL: cfg.baseUrl, ignoreHTTPSErrors: true });
   const close = async (): Promise<void> => { await context.close(); };
-  let handedOver = false;
-  try {
-    const page = await context.newPage();
 
-    let sentinel: Sentinel;
+  /**
+   * A session that will not be handed over is closed here — and a close that fails is one more
+   * finding, never a replacement for the findings that explain the refusal (C1).
+   */
+  const refuse = async (findings: Finding[]): Promise<OpenedSession> => {
     try {
-      sentinel = await installSentinel(page, agent);
+      await close();
     } catch (error) {
-      // With no sentinel there are no signals at all, so nothing is run: a page driven with
-      // nothing watching it would report clean no matter what it hit.
-      return {
-        ok: false,
-        findings: [assertionFinding(
-          `the sentinel could not be installed (${messageOf(error)}) — this journey was not run`,
-        )],
-      };
+      findings.push(assertionFinding(`the refused session's browser context could not be closed (${messageOf(error)})`));
     }
-    const drain = () => drainOrSaySo(sentinel);
+    return { ok: false, findings };
+  };
 
-    if (!isAnonymous(actor)) {
-      try {
-        await authenticate(page, sentinel, agent, actor);
-      } catch (error) {
-        // Observed first, then why, which usually explains them.
-        return { ok: false, findings: [...await drain(), assertionFinding(messageOf(error))] };
-      }
+  let page: Page;
+  try {
+    page = await context.newPage();
+  } catch (error) {
+    // Not a session failure, so it propagates — with the context closed, and a close that also
+    // failed named alongside it rather than in its place.
+    try {
+      await close();
+    } catch (closing) {
+      throw new Error(`${messageOf(error)}\n…and the browser context could not be closed: ${messageOf(closing)}`, { cause: error });
     }
-
-    handedOver = true;
-    return { ok: true, session: { actor, page, sentinel, drain, close } };
-  } finally {
-    if (!handedOver) await close();
+    throw error;
   }
+
+  let sentinel: Sentinel;
+  try {
+    sentinel = await installSentinel(page, agent);
+  } catch (error) {
+    // With no sentinel there are no signals at all, so nothing is run: a page driven with
+    // nothing watching it would report clean no matter what it hit.
+    return refuse([assertionFinding(
+      `the sentinel could not be installed (${messageOf(error)}) — this journey was not run`,
+    )]);
+  }
+  const drain = () => drainOrSaySo(sentinel);
+
+  if (!isAnonymous(actor)) {
+    try {
+      await authenticate(page, sentinel, agent, actor);
+    } catch (error) {
+      // Observed first, then why, which usually explains them.
+      return refuse([...await drain(), assertionFinding(messageOf(error))]);
+    }
+  }
+
+  return { ok: true, session: { actor, page, sentinel, drain, close } };
 }
 
 export async function runAsActor(

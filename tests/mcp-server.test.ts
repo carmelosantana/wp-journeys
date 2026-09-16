@@ -340,6 +340,49 @@ describe('login_as (R84, R85, R87)', () => {
     expect((await call(server, 'navigate', { path: '/' })).text).toMatch(/call login_as first/);
   });
 
+  it('keeps the previous session\'s findings when opening the next one THROWS (C1)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    h.page.navigations = [() => response(502, 'https://s.test/')];
+    await call(server, 'navigate', { path: '/' });
+    h.browser.newContextError = new Error('Target page, context or browser has been closed');
+
+    const { text, isError } = await call(server, 'login_as', { actor: 'editor' });
+
+    expect(isError).toBe(true);
+    expect(text).toMatch(/could not open a session as editor: Target page, context or browser has been closed/);
+    expect(text).toMatch(/previous session \(anonymous\)[^\n]*1 finding/);
+    expect(text).toMatch(/\[response\] navigation to .* returned HTTP 502/);
+  });
+
+  it('relaunches a browser that disconnected, instead of failing every later call (C1)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    expect(h.launches()).toBe(1);
+
+    h.browser.disconnect();
+    const { isError } = await call(server, 'login_as', { actor: 'anonymous' });
+
+    expect(isError).toBe(false);
+    expect(h.launches()).toBe(2);
+    await server.shutdown();
+  });
+
+  it('relaunches a cached browser that reports itself disconnected, even without the event (C1)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    // Silence the event: only isConnected() says so.
+    (h.browser as unknown as { connected: boolean }).connected = false;
+
+    await call(server, 'login_as', { actor: 'anonymous' });
+
+    expect(h.launches()).toBe(2);
+    await server.shutdown();
+  });
+
   it('refuses a session whose sentinel could not be installed — no unwatched page', async () => {
     const server = createMcpServer(harness({ agent: { logDelta: async () => { throw new Error('agent unreachable'); } } }).deps);
 

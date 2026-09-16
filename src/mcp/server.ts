@@ -117,13 +117,28 @@ export function createMcpServer(deps: McpDeps) {
     return { cfg, agent: deps.createAgent(cfg.baseUrl, cfg.secret) };
   }
 
-  function launched(): Promise<Browser> {
-    browser ??= deps.launchBrowser().catch((error: unknown) => {
-      // A failed launch is not remembered: the next call may try again.
+  /**
+   * The browser, launched on first use (R90). Neither a failed launch nor a browser that has gone
+   * away is remembered (C1): a crashed browser would otherwise fail every later call for good.
+   */
+  async function launched(): Promise<Browser> {
+    if (browser !== null) {
+      const held = await browser;
+      if (held.isConnected()) return held;
       browser = null;
-      throw error;
-    });
-    return browser;
+    }
+    const launching: Promise<Browser> = deps.launchBrowser().then(
+      (fresh) => {
+        fresh.on('disconnected', () => { if (browser === launching) browser = null; });
+        return fresh;
+      },
+      (error: unknown) => {
+        browser = null;
+        throw error;
+      },
+    );
+    browser = launching;
+    return launching;
   }
 
   /**
@@ -178,7 +193,14 @@ export function createMcpServer(deps: McpDeps) {
       const target = await launched();
       const previous = await retire();
 
-      const opened = await openActorSession(target, cfg, agent, actor as Actor);
+      let opened;
+      try {
+        opened = await openActorSession(target, cfg, agent, actor as Actor);
+      } catch (error) {
+        // The previous session is already drained and closed: its findings exist only here now,
+        // so a throw must not take them with it (C1, R85).
+        return { isError: true, text: [`could not open a session as ${actor}: ${messageOf(error)}`, ...previous].join('\n') };
+      }
       if (!opened.ok) {
         return {
           isError: true,

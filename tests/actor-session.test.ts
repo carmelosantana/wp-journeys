@@ -112,6 +112,37 @@ describe('openActorSession', () => {
     expect(browser.closed).toEqual([true]);
   });
 
+  it('keeps a failed login\'s findings when closing its context ALSO fails, and says so (C1)', async () => {
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    browser.contextCloseError = new Error('context already gone');
+    const { agent } = fakeAgent();
+    page.navigations = [() => response(200, 'https://s.test/wp-login.php')];
+
+    const opened = await openActorSession(browser.asBrowser(), CFG, agent, Actor.EDITOR);
+
+    expect(opened.ok).toBe(false);
+    expect(!opened.ok && opened.findings).toMatchObject([
+      { kind: 'response', text: expect.stringContaining('the actor is not authenticated') },
+      { kind: 'assertion', text: expect.stringContaining('could not authenticate as editor') },
+      { kind: 'assertion', text: expect.stringContaining('context already gone') },
+    ]);
+  });
+
+  it('keeps the sentinel failure when closing its context also fails (C1)', async () => {
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    browser.contextCloseError = new Error('context already gone');
+    const { agent } = fakeAgent({ logDelta: async () => { throw new Error('agent unreachable'); } });
+
+    const opened = await openActorSession(browser.asBrowser(), CFG, agent, Actor.ANONYMOUS);
+
+    expect(!opened.ok && opened.findings).toMatchObject([
+      { kind: 'assertion', text: expect.stringContaining('agent unreachable') },
+      { kind: 'assertion', text: expect.stringContaining('context already gone') },
+    ]);
+  });
+
   it('says out loud when a session could not be drained, rather than reading as clean', async () => {
     const page = new FakePage();
     const browser = new FakeBrowser(page);

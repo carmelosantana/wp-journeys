@@ -105,16 +105,43 @@ export class FakeBrowser {
 
   constructor(readonly page: FakePage) {}
 
+  /** When set, the next `newContext()` rejects with it (and clears it) — a crashed browser. */
+  newContextError: Error | null = null;
+  /** When set, every context's `close()` rejects with it, after recording the close attempt. */
+  contextCloseError: Error | null = null;
+  private connected = true;
+  private readonly disconnectHandlers: Array<() => void> = [];
+
   async newContext(options: unknown): Promise<BrowserContext> {
+    if (this.newContextError) {
+      const error = this.newContextError;
+      this.newContextError = null;
+      throw error;
+    }
     this.options.push(options);
     const at = this.closed.push(false) - 1;
     const context = {
       newPage: async (): Promise<Page> => this.page.asPage(),
       close: async (): Promise<void> => {
         this.closed[at] = true;
+        if (this.contextCloseError) throw this.contextCloseError;
       },
     };
     return context as unknown as BrowserContext;
+  }
+
+  isConnected(): boolean {
+    return this.connected;
+  }
+
+  on(event: string, handler: () => void): void {
+    if (event === 'disconnected') this.disconnectHandlers.push(handler);
+  }
+
+  /** The browser process went away, as Playwright reports it. */
+  disconnect(): void {
+    this.connected = false;
+    for (const handler of this.disconnectHandlers) handler();
   }
 
   /** How many times the BROWSER itself was closed (contexts are tracked in `closed`). */
