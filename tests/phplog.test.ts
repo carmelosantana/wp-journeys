@@ -23,6 +23,19 @@ describe('classifyPhpLogLine', () => {
     expect(classifyPhpLogLine(line)?.kind).toBe('phplog');
   });
 
+  it('redacts a login token a diagnostic quotes, e.g. the request URI it was raised on', () => {
+    const line = '[08-Sep-2026 14:02:11 UTC] PHP Warning:  bad request /?wpj_login=SECRETTOKENabc in /x.php on line 1';
+    const finding = classifyPhpLogLine(line);
+    expect(finding?.text).toBe('PHP Warning: bad request /?wpj_login=<REDACTED> in /x.php on line 1');
+  });
+
+  it('redacts a token from the wpdb and WordPress shapes too', () => {
+    const wpdb = '[08-Sep-2026 14:02:11 UTC] WordPress database error Oops for query SELECT 1 made by /?wpj_login=SECRETTOKENabc';
+    const wp = '[08-Sep-2026 14:02:11 UTC] Function x was called incorrectly at /?wpj_login=SECRETTOKENabc';
+    expect(classifyPhpLogLine(wpdb)?.text).not.toContain('SECRETTOKEN');
+    expect(classifyPhpLogLine(wp)?.text).not.toContain('SECRETTOKEN');
+  });
+
   it('ignores a blank line and a bare stack-trace frame', () => {
     expect(classifyPhpLogLine('')).toBeNull();
     expect(classifyPhpLogLine('   ')).toBeNull();

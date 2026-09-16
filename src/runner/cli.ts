@@ -24,6 +24,7 @@ import type { Config } from '../config.ts';
 import { projectSurface } from '../discovery/surface.ts';
 import type { Surface } from '../discovery/types.ts';
 import { messageOf } from '../errors.ts';
+import { outboundText } from '../outbound.ts';
 import { outcomeOf } from '../journeys/index.ts';
 import { interpret } from '../manifest/interpret.ts';
 import { loadManifest } from '../manifest/load.ts';
@@ -311,7 +312,9 @@ export async function runSuite(
         actor: journey.actor,
         surface: journey.surface,
         entitiesCreated: raw?.entitiesCreated ?? 0,
-        findings: [...carried, { kind: 'assertion', text: messageOf(error) }],
+        // Filtered here as well as on the way out: the result is also what MCP hands back, and a
+        // journey's own message may quote a minted URL.
+        findings: [...carried, { kind: 'assertion', text: outboundText(messageOf(error), cfg?.secret) }],
       };
       if (raw?.notes) failed.notes = raw.notes;
       results.push(failed);
@@ -329,8 +332,8 @@ export async function runSuite(
  * lifecycle journey uninstalls the plugin under test. `--skip-delete` keeps the files (R6) but
  * the uninstall routine itself runs, and that is not a read-only operation.
  */
-function usage(reason: string): void {
-  process.stderr.write(
+function usage(reason: string): string {
+  return (
     `${reason}\n\n` +
       'usage:\n' +
       '  wpj run --plugin <slug>    run the conformance suite against a plugin\n' +
@@ -353,26 +356,40 @@ function usage(reason: string): void {
       'If the plugin is active when the run starts, the lifecycle row is a skip, not a pass.\n' +
       'Mount it INACTIVE on a fresh site (or remove its state first). `wph mount` is not such a\n' +
       'workflow on its own: it activates the plugin it mounts — deactivate it and clear its\n' +
-      'state before the first run.\n',
+      'state before the first run.\n'
   );
+}
+
+/** Where `main` writes, every byte through `outboundText`. */
+interface Streams {
+  out(text: string): void;
+  err(text: string): void;
+}
+
+function streamsFor(env: NodeJS.ProcessEnv): Streams {
+  const secret = env[SECRET_VAR];
+  return {
+    out: (text) => { process.stdout.write(outboundText(text, secret)); },
+    err: (text) => { process.stderr.write(outboundText(text, secret)); },
+  };
 }
 
 /**
  * `wpj skills install` (R99). Routed from `main`'s own argv like every other command, and only
  * from the command line: it writes into a home directory, which no MCP tool may do.
  */
-async function skillsCommand(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+async function skillsCommand(args: string[], env: NodeJS.ProcessEnv, io: Streams): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === undefined) {
-    usage('wpj skills needs a subcommand — the only one is `install`');
+    io.err(usage('wpj skills needs a subcommand — the only one is `install`'));
     return 2;
   }
   if (sub !== 'install') {
-    usage(`unknown skills subcommand ${JSON.stringify(sub)} — the only one is \`install\``);
+    io.err(usage(`unknown skills subcommand ${JSON.stringify(sub)} — the only one is \`install\``));
     return 2;
   }
   if (rest.length > 0) {
-    usage(`unexpected argument ${JSON.stringify(rest[0])} — wpj skills install takes no arguments`);
+    io.err(usage(`unexpected argument ${JSON.stringify(rest[0])} — wpj skills install takes no arguments`));
     return 2;
   }
   const { installSkills } = await import('../commands/skills.ts');
@@ -384,18 +401,21 @@ async function skillsCommand(args: string[], env: NodeJS.ProcessEnv): Promise<nu
  * @param createAgent injectable so a test can drive the run up to the first wp-cli call without a
  *   site; production always uses the real client
  * @param launch injectable so a test can prove when, and whether, a browser is launched
+ * @param fetchImpl injectable so a test can drive a whole run without a network
  */
 export async function main(
   argv: string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
   createAgent: (baseUrl: string, secret: string) => AgentClient = createAgentClient,
   launch: () => Promise<Browser> = launchChromium,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<number> {
+  const io = streamsFor(env);
   // Before parseArgs, config and everything else: the server must start even when configuration
   // is broken (R89), and in this mode stdout belongs to the protocol alone (R90).
   if (argv[0] === 'mcp') {
     if (argv.length > 1) {
-      usage(`unexpected argument ${JSON.stringify(argv[1])} — wpj mcp takes no arguments`);
+      io.err(usage(`unexpected argument ${JSON.stringify(argv[1])} — wpj mcp takes no arguments`));
       return 2;
     }
     const { serve } = await import('../mcp/server.ts');
@@ -403,11 +423,11 @@ export async function main(
     return 0;
   }
 
-  if (argv[0] === 'skills') return skillsCommand(argv.slice(1), env);
+  if (argv[0] === 'skills') return skillsCommand(argv.slice(1), env, io);
 
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
-    usage(parsed.reason);
+    io.err(usage(parsed.reason));
     return 2;
   }
   const { plugin } = parsed;
@@ -419,9 +439,7 @@ export async function main(
   // agent, so a target without wp-cli loses only this one capability, loudly.
   const wp = env[WP_VAR];
   if (!wp) {
-    process.stderr.write(
-      `${WP_VAR} is not set — the runner needs a wp-cli command to toggle the plugin.\n`,
-    );
+    io.err(`${WP_VAR} is not set — the runner needs a wp-cli command to toggle the plugin.\n`);
     return 2;
   }
 
@@ -435,13 +453,13 @@ export async function main(
   let results: JourneyResult[];
   let surface: Surface;
   try {
-    const prepared = await prepareSuite(agent, cfg, plugin, plan, siteActions(wp, plugin));
+    const prepared = await prepareSuite(agent, cfg, plugin, plan, siteActions(wp, plugin), fetchImpl);
     surface = prepared.surface;
     results = await runSuite(prepared.suite, browser, cfg, agent, prepared.baseline);
   } finally {
     await browser.close();
   }
 
-  process.stdout.write(`${renderSummary(results, surface)}\n`);
+  io.out(`${renderSummary(results, surface)}\n`);
   return exitCodeFor(results);
 }

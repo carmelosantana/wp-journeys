@@ -10,6 +10,7 @@
 import type { Page } from '@playwright/test';
 
 import type { AgentClient } from '../agent/client.ts';
+import { messageOf } from '../errors.ts';
 import {
   BENIGN_NETWORK, classifyConsole, classifyNavigation, classifyPageError, classifyPhpLogLine,
   classifyRequestFailed, classifyResponse, redactLoginToken, scanBody, type Expectation, type Finding,
@@ -327,7 +328,12 @@ export async function installSentinel(
       try {
         response = await page.goto(url);
       } catch (error) {
-        if (!BENIGN_NETWORK.test(String(error))) throw error;
+        if (!BENIGN_NETWORK.test(String(error))) {
+          // Rethrown REDACTED, and without the original as its cause: Playwright's message quotes
+          // the URL it failed on, which at the login step is the minted token, and a cause is
+          // printed by anything that inspects the error.
+          throw new Error(redactLoginToken(messageOf(error)));
+        }
         // Discard everything the abandoned attempt observed (R43). Dedupe would absorb its
         // duplicated 5xx, but nothing absorbs its console noise, and that noise would fail a
         // journey that is actually fine. Settle first, so late-arriving findings from that

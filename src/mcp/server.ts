@@ -27,16 +27,16 @@ import type { AgentClient } from '../agent/client.ts';
 import { loadConfig, SECRET_VAR } from '../config.ts';
 import type { Config } from '../config.ts';
 import { projectSurface } from '../discovery/surface.ts';
-import { messageOf, redactSecret } from '../errors.ts';
+import { messageOf } from '../errors.ts';
 import { outcomeOf, register } from '../journeys/index.ts';
 import { openActorSession, type ActorSession } from '../journeys/support.ts';
 import { BODY_TIMEOUT_MS } from '../manifest/interpret.ts';
 import { plural, renderFinding, renderJourney } from '../report/summary.ts';
 import { launchChromium } from '../runner/browser.ts';
 import { manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape, WP_VAR } from '../runner/cli.ts';
-import { redactLoginToken } from '../sentinel/classify.ts';
 import type { Finding } from '../sentinel/phplog.ts';
 import { isSitePath } from '../site-path.ts';
+import { outboundText } from '../outbound.ts';
 import { VERSION } from '../version.ts';
 import { describeTools } from './tools.ts';
 
@@ -132,7 +132,7 @@ export function createMcpServer(deps: McpDeps) {
    * rather than a property of today's messages.
    */
   function outbound(text: string): string {
-    return redactLoginToken(redactSecret(text, deps.env[SECRET_VAR]));
+    return outboundText(text, deps.env[SECRET_VAR]);
   }
 
   /** The loader `wpj run` uses; its message is the tool's error when configuration is broken (R89). */
@@ -456,7 +456,7 @@ export async function serve(
       await server.shutdown();
     } catch (error) {
       // Diagnostics go to stderr, never to the protocol stream (R90).
-      process.stderr.write(`wpj mcp: shutdown failed: ${redactLoginToken(redactSecret(messageOf(error), deps.env[SECRET_VAR]))}\n`);
+      process.stderr.write(`wpj mcp: shutdown failed: ${outboundText(messageOf(error), deps.env[SECRET_VAR])}\n`);
     } finally {
       diverted?.restore();
     }

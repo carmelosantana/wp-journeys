@@ -15,6 +15,7 @@ import { skillsRoot, skillTarget } from '../src/commands/skills.ts';
 import { main, manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape, wpCommands } from '../src/runner/cli.ts';
 import type { Baseline } from '../src/suite/baseline.ts';
 import { SPAWN_TIMEOUT_MS } from './helpers/timeouts.ts';
+import { FakeBrowser, FakePage, fakeAgent } from './helpers/fakes.ts';
 
 /** A per-request deprecation this site writes whatever is under test (R45). */
 const NOISE_TEXT = 'PHP Deprecated: Creation of dynamic property Acme::$x is deprecated';
@@ -314,6 +315,44 @@ describe('the browser', () => {
 
     expect(String(outcome)).toContain('wpj could not launch Chromium (test)');
     await expect(access(marker)).rejects.toThrow();
+  });
+});
+
+describe('what wpj run writes (one outbound filter)', () => {
+  it('never prints a login token or the secret, even when a journey\'s error quotes both', async () => {
+    const secret = 'cli-outbound-secret-0123456789';
+    const token = 'SECRETTOKENabcdef';
+    /** A page whose every mint navigation fails the way Playwright words it: quoting the URL. */
+    class Refusing extends FakePage {
+      override async goto(url: string): Promise<unknown> {
+        if (url.includes('wpj_login=')) throw new Error(`page.goto: net::ERR_UNSAFE_PORT at ${url} (sent ${secret})`);
+        return super.goto(url);
+      }
+    }
+    const withScreen: RawRegistries = {
+      menu: [['Acme', 'manage_options', 'acme']], submenu: {}, blocks: [], shortcodes: [], routes: {},
+      roles: { administrator: ['manage_options', 'read'], subscriber: ['read'] }, pluginPages: ['acme'],
+    };
+    const bare: RawRegistries = { ...withScreen, menu: [], pluginPages: [] };
+    let discovered = 0;
+    const { agent } = fakeAgent({
+      status: async () => ({ ok: true, wp: '7.1', php: '8.4', debugLog: true, pluginActive: false }),
+      discover: async () => (discovered++ === 0 ? bare : withScreen),
+      snapshot: async () => ({ options: [], tables: [], cron: [], userMeta: [] }),
+      mintLogin: async () => ({ url: `http://s.test:6000/?wpj_login=${token}` }),
+    });
+    const browser = new FakeBrowser(new Refusing());
+    const fetchImpl = (async () => new Response('<html><body>home</body></html>')) as unknown as typeof fetch;
+
+    const { value, stdout, stderr } = await quietly(() => main(['run', '--plugin', 'acme'], {
+      WPJ_BASE_URL: 'https://s.test/', WPJ_AGENT_SECRET: secret, WPJ_WP: 'true #',
+    }, () => agent, async () => browser.asBrowser(), fetchImpl));
+
+    expect(value).toBe(1);
+    expect(stdout).toContain('could not authenticate as');
+    expect(stdout).toContain('ERR_UNSAFE_PORT');
+    expect(stdout + stderr).not.toContain(token);
+    expect(stdout + stderr).not.toContain(secret);
   });
 });
 

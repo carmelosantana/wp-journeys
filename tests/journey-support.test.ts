@@ -36,6 +36,22 @@ describe('runAsActor', () => {
     expect(browser.closed).toEqual([true]);
   });
 
+  it('never lets a login token reach the result when the mint navigation itself throws', async () => {
+    // Playwright quotes the URL it could not load, and at the login step that URL IS the token.
+    const page = new FakePage();
+    page.navigations = [(url) => { throw new Error(`page.goto: net::ERR_UNSAFE_PORT at ${url}`); }];
+    const browser = new FakeBrowser(page);
+    const { agent } = fakeAgent({ mintLogin: async () => ({ url: 'http://s.test:6000/?wpj_login=SECRETTOKENabc' }) });
+
+    const result = await runAsActor(
+      browser.asBrowser(), CFG, agent, 'admin-sweep', Actor.EDITOR, 'admin', async () => 0,
+    );
+
+    expect(JSON.stringify(result)).not.toContain('SECRETTOKEN');
+    expect(JSON.stringify(result)).toContain('could not authenticate as editor');
+    expect(JSON.stringify(result)).toContain('ERR_UNSAFE_PORT');
+  });
+
   it('fails a journey whose page threw an uncaught JavaScript error', async () => {
     const page = new FakePage();
     const browser = new FakeBrowser(page);

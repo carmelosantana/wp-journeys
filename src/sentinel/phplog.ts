@@ -7,6 +7,7 @@
  *
  * Pure: a string in, a Finding or null out.
  */
+import { redactLoginToken } from './redact.ts';
 
 /**
  * Which signal produced a finding. Every kind but `assertion` is something the sentinel
@@ -52,9 +53,12 @@ const WPDB_DIAGNOSTIC = /\[\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2} [^\]]+\]\s*
 /** The leading `[date] ` PHP's error_log() adds. */
 const LOG_DATE = /^\[[^\]]*\]\s*/;
 
-/** Summary text: no HTML (core's _doing_it_wrong keeps `<strong>` and `<a>`), no runs of spaces. */
+/**
+ * Summary text: no HTML (core's _doing_it_wrong keeps `<strong>` and `<a>`), no runs of spaces,
+ * and no login token — a diagnostic can quote the request URI it was raised on.
+ */
 function readable(text: string): string {
-  return text.replace(/<[^>]*>/g, '').replace(/\s{2,}/g, ' ').trim();
+  return redactLoginToken(text.replace(/<[^>]*>/g, '').replace(/\s{2,}/g, ' ').trim());
 }
 
 export function classifyPhpLogLine(line: string): Finding | null {

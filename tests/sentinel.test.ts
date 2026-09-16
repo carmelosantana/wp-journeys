@@ -247,6 +247,18 @@ describe('the live listeners', () => {
     ]);
   });
 
+  it('redacts a login token from a navigation error it rethrows', async () => {
+    const { page, sentinel } = await setup();
+    page.navigations = [() => { throw new Error('page.goto: net::ERR_UNSAFE_PORT at http://s.test:6000/?wpj_login=SECRETTOKENabc'); }];
+
+    const error = await sentinel.visit(page.asPage(), 'http://s.test:6000/?wpj_login=SECRETTOKENabc').catch((e: unknown) => e);
+
+    expect(String(error)).toContain('ERR_UNSAFE_PORT');
+    expect(String(error)).not.toContain('SECRETTOKEN');
+    expect(JSON.stringify(error, Object.getOwnPropertyNames(error as object))).not.toContain('SECRETTOKEN');
+    expect((error as Error).cause).toBeUndefined();
+  });
+
   it('records an uncaught exception, which Playwright reports ONLY as pageerror', async () => {
     const { page, sentinel } = await setup();
     page.current = 'https://s.test/wp-admin/admin.php?page=acme';

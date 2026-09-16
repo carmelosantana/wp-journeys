@@ -126,7 +126,8 @@ async function authenticate(
   } catch (error) {
     // Named, because "HTTP 403 for mintLogin" in a summary does not say which step of which
     // journey could not run.
-    throw new Error(`could not authenticate as ${actor}: ${messageOf(error)}`);
+    // Redacted: whatever failed may quote the minted URL, which is a live credential.
+    throw new Error(`could not authenticate as ${actor}: ${redactLoginToken(messageOf(error))}`);
   }
 }
 
