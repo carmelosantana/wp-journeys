@@ -8,11 +8,18 @@
 function wpj_snapshot($plugin = '') {
     global $wpdb;
 
-    $options = $wpdb->get_col("SELECT option_name FROM {$wpdb->options}");
-    $tables = $wpdb->get_col('SHOW TABLES');
-    $meta_keys = $wpdb->get_col("SELECT DISTINCT meta_key FROM {$wpdb->usermeta}");
-
-    sort($options); sort($tables); sort($meta_keys);
+    $options = wpj_snapshot_column($wpdb, "SELECT option_name FROM {$wpdb->options}");
+    if ($options instanceof WP_Error) {
+        return $options;
+    }
+    $tables = wpj_snapshot_column($wpdb, 'SHOW TABLES');
+    if ($tables instanceof WP_Error) {
+        return $tables;
+    }
+    $meta_keys = wpj_snapshot_column($wpdb, "SELECT DISTINCT meta_key FROM {$wpdb->usermeta}");
+    if ($meta_keys instanceof WP_Error) {
+        return $meta_keys;
+    }
 
     $cron = wpj_snapshot_cron_hooks(_get_cron_array());
     return array_merge(array(
@@ -22,6 +29,31 @@ function wpj_snapshot($plugin = '') {
         'userMeta' => $meta_keys,
         'cronCore' => wpj_snapshot_core_hooks($cron, wpj_snapshot_callbacks_by_hook($cron), wpj_core_dirs()),
     ), wpj_plugin_active_field((string) $plugin, get_option('active_plugins')));
+}
+
+/**
+ * One column of names, sorted — or a WP_Error when the query failed.
+ *
+ * wpdb::get_col() answers a failed query with an EMPTY array, and an empty `after` snapshot
+ * reads exactly like "the uninstall removed everything". So a database error is an error here,
+ * returned as a failed REST response, never a list.
+ *
+ * @param wpdb   $wpdb
+ * @param string $sql
+ * @return string[]|WP_Error
+ */
+function wpj_snapshot_column($wpdb, $sql) {
+    $column = $wpdb->get_col($sql);
+    if ($wpdb->last_error !== '' || !is_array($column)) {
+        $why = $wpdb->last_error !== '' ? $wpdb->last_error : 'the query returned no column';
+        return new WP_Error(
+            'wpj_snapshot_failed',
+            sprintf('the snapshot query failed (%s): %s', $why, $sql),
+            array('status' => 500)
+        );
+    }
+    sort($column);
+    return $column;
 }
 
 /**

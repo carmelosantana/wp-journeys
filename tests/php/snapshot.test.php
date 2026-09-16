@@ -2,6 +2,51 @@
 require __DIR__ . '/assert.php';
 require __DIR__ . '/../../mu-plugin/src/snapshot.php';
 
+// A stand-in for core's WP_Error, which these pure tests do not load.
+if (!class_exists('WP_Error')) {
+    class WP_Error {
+        public $code;
+        public $message;
+        public $data;
+        public function __construct($code = '', $message = '', $data = '') {
+            $this->code = $code;
+            $this->message = $message;
+            $this->data = $data;
+        }
+    }
+}
+
+/** A wpdb that answers get_col with a scripted column and error, as a real one would. */
+class WPJ_T_Fake_Wpdb {
+    public $last_error = '';
+    private $answer;
+    private $error;
+    public $queries = array();
+    public function __construct($answer, $error) {
+        $this->answer = $answer;
+        $this->error = $error;
+    }
+    public function get_col($sql) {
+        $this->queries[] = $sql;
+        // wpdb resets last_error on every query, then sets it if the query failed.
+        $this->last_error = $this->error;
+        return $this->answer;
+    }
+}
+
+// A failed query returns an EMPTY column, which reads exactly like "no orphans". It must be an error.
+$ok = wpj_snapshot_column(new WPJ_T_Fake_Wpdb(array('b', 'a'), ''), 'SELECT option_name FROM wp_options');
+wpj_assert('a successful column is returned, sorted', array('a', 'b'), $ok);
+$failed = wpj_snapshot_column(new WPJ_T_Fake_Wpdb(array(), 'Table wp_options is marked as crashed'), 'SELECT option_name FROM wp_options');
+wpj_assert('a database error is a WP_Error, never an empty list', true, $failed instanceof WP_Error);
+wpj_assert('the error is named wpj_snapshot_failed', 'wpj_snapshot_failed', $failed instanceof WP_Error ? $failed->code : null);
+wpj_assert('the error is a 500', array('status' => 500), $failed instanceof WP_Error ? $failed->data : null);
+wpj_assert('the error names the database error and the query', true, $failed instanceof WP_Error
+    && strpos($failed->message, 'Table wp_options is marked as crashed') !== false
+    && strpos($failed->message, 'SELECT option_name FROM wp_options') !== false);
+$not_array = wpj_snapshot_column(new WPJ_T_Fake_Wpdb(null, ''), 'SHOW TABLES');
+wpj_assert('a non-array answer is an error too', true, $not_array instanceof WP_Error);
+
 // The shape _get_cron_array() returns: timestamp -> hook -> event signature -> event.
 $cron = array(
     1700000000 => array('wp_version_check' => array('40cd750b' => array('schedule' => 'twicedaily', 'args' => array()))),

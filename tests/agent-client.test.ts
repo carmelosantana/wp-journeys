@@ -79,6 +79,14 @@ describe('createAgentClient, on the way out (redirects and timeouts)', () => {
   });
 });
 
+describe('createAgentClient, on a failed action', () => {
+  it('names the agent\'s own error code and message, so a failed snapshot says why', async () => {
+    const f = fakeFetch(500, { code: 'wpj_snapshot_failed', message: 'the snapshot query failed (boom): SHOW TABLES', data: { status: 500 } });
+    await expect(createAgentClient('https://wpjtest.wp.test', 'x'.repeat(16), f).snapshot())
+      .rejects.toThrow('wp-journeys agent returned HTTP 500 for "snapshot" (wpj_snapshot_failed: the snapshot query failed (boom): SHOW TABLES)');
+  });
+});
+
 describe('createAgentClient', () => {
   it('posts to the agent route with the shared secret header', async () => {
     const f = fakeFetch(200, STATUS_BODY);

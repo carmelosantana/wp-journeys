@@ -176,7 +176,12 @@ export function createAgentClient(
       );
     }
     if (!response.ok) {
-      throw new Error(`wp-journeys agent returned HTTP ${response.status} for "${label}"`);
+      // The agent's own code and message, when it sent them: a failed snapshot query says which
+      // query and why, and "HTTP 500" alone says neither.
+      const detail = typeof payload.code === 'string'
+        ? ` (${payload.code}: ${typeof payload.message === 'string' ? payload.message : 'no message'})`
+        : '';
+      throw new Error(`wp-journeys agent returned HTTP ${response.status} for "${label}"${detail}`);
     }
     return payload as T;
   }

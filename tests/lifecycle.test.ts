@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { outcomeOf } from '../src/journeys/index.ts';
 import type { Snapshot } from '../src/discovery/snapshot.ts';
 import type { Baseline } from '../src/suite/baseline.ts';
+import { createAgentClient } from '../src/agent/client.ts';
 import { lifecycle } from '../src/suite/lifecycle.ts';
 import { CFG, FakeBrowser, FakePage, fakeAgent, landsOn } from './helpers/fakes.ts';
 
@@ -28,6 +29,30 @@ async function runLifecycle(baseline: Baseline, after: Snapshot) {
     .run(new FakeBrowser(page).asBrowser(), CFG, agent);
   return { result, asked, uninstalled };
 }
+
+describe('lifecycle: a snapshot that failed is a failure, never an empty list', () => {
+  it('fails loudly, naming the database error, when the after-snapshot query failed', async () => {
+    const page = new FakePage();
+    page.navigations = [landsOn('https://s.test/wp-admin/')];
+    const body = JSON.stringify({
+      code: 'wpj_snapshot_failed',
+      message: 'the snapshot query failed (Table wp_options is marked as crashed): SELECT option_name FROM wp_options',
+      data: { status: 500 },
+    });
+    const fetchImpl = (async () => new Response(body, { status: 500, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const real = createAgentClient(CFG.baseUrl, CFG.secret, fetchImpl);
+    const { agent } = fakeAgent({ snapshot: (plugin?: string) => real.snapshot(plugin) });
+
+    const result = await lifecycle('acme', baselineWith(), async () => {})
+      .run(new FakeBrowser(page).asBrowser(), CFG, agent);
+
+    expect(outcomeOf(result)).toBe('fail');
+    expect(result.findings).toMatchObject([
+      { kind: 'assertion', text: expect.stringContaining('wpj_snapshot_failed') },
+    ]);
+    expect(JSON.stringify(result.findings)).toContain('Table wp_options is marked as crashed');
+  });
+});
 
 describe('lifecycle: the plugin must really be gone (R79)', () => {
   it('asks the post-uninstall snapshot about the plugin under test', async () => {
