@@ -1,0 +1,38 @@
+{
+  "description": "wp-journeys manifest for acme. Set WPJ_MANIFEST_DIR to the directory holding this file, which need not be the plugin root. Replace every acme, selector and URL with your plugin's own.",
+  "version": 1,
+  "plugin": "acme",
+  "gate": { "screen": "acme" },
+  "deprecated": { "shortcodes": ["acme_legacy"] },
+  "journeys": [
+    {
+      "name": "acme-title-round-trip",
+      "actor": "administrator",
+      "surface": "both",
+      "settings": [
+        {
+          "url": "/wp-admin/admin.php?page=acme",
+          "field": "#acme_title",
+          "value": "Hello from wp-journeys",
+          "readBack": "/?wpj_render=%5Bacme%5D",
+          "submit": "#submit"
+        }
+      ]
+    },
+    {
+      "name": "acme-editor-reads-but-cannot-configure",
+      "actor": "editor",
+      "surface": "admin",
+      "screens": [
+        { "url": "/wp-admin/admin.php?page=acme", "allow": ["editor"], "deny": [] },
+        { "url": "/wp-admin/admin.php?page=acme-settings", "allow": [], "deny": ["editor"] }
+      ]
+    },
+    {
+      "name": "acme-shortcode-for-a-visitor",
+      "actor": "anonymous",
+      "surface": "frontend",
+      "shortcodes": ["acme"]
+    }
+  ]
+}
