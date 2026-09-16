@@ -246,6 +246,22 @@ describe('captureBaseline', () => {
     expect(baseline.bodyNoise).toEqual([]);
   });
 
+  it('measures EVERY per-request diagnostic a render prints, not just the first (R64)', async () => {
+    // The baseline half of R64. A render that prints two per-request diagnostics has two pieces
+    // of noise; measuring only the first leaves the second to be reported as a defect of
+    // whatever plugin happens to be under test, on every journey, for the whole run.
+    const both =
+      '<html><body>\n'
+      + 'Warning: Undefined variable $notset in /wp-content/themes/acme/header.php on line 8\n'
+      + 'Warning: Undefined array key "id" in /wp-content/plugins/acme/admin.php on line 12\n'
+      + '</body></html>';
+    const { agent, fetchImpl, deactivate, activate } = harness({ bodies: [both, both] });
+
+    const baseline = await captureBaseline(agent, CFG, deactivate, activate, fetchImpl);
+
+    expect(baseline.bodyNoise).toHaveLength(2);
+  });
+
   it('measures body noise even when the log signal is unavailable', async () => {
     // The two signals are independent evidence. Coupling them would mean a site with
     // WP_DEBUG_LOG off gets no body subtraction either, for no reason.
@@ -339,7 +355,7 @@ describe('withoutBaselineNoise', () => {
     // Built THROUGH scanBody rather than by hand, so this asserts against the real finding shape
     // instead of a guess at it — which is how the R63 collapse hid here in the first place.
     const captured = await baselineWithBodyNoise();
-    const sameDefectElsewhere = scanBody(BODY_WARNING, 'https://s.test/wp-admin/options-general.php');
+    const sameDefectElsewhere = scanBody(BODY_WARNING, 'https://s.test/wp-admin/options-general.php')[0];
 
     expect(withoutBaselineNoise([sameDefectElsewhere!], captured)).toEqual([]);
   });
@@ -350,7 +366,7 @@ describe('withoutBaselineNoise', () => {
     // `Warning`, so a key that survives URL-stripping as nothing but the severity word matches
     // them and deletes a genuine defect — silently, at every URL, for the whole run.
     const captured = await baselineWithBodyNoise();
-    const genuineDefect = scanBody(BODY_OTHER_WARNING, 'https://s.test/wp-admin/admin.php?page=acme');
+    const genuineDefect = scanBody(BODY_OTHER_WARNING, 'https://s.test/wp-admin/admin.php?page=acme')[0];
 
     expect(withoutBaselineNoise([genuineDefect!], captured)).toEqual([genuineDefect]);
   });
@@ -360,7 +376,7 @@ describe('withoutBaselineNoise', () => {
     // is a warning is the plugin under test. It passes even with a severity-only key, which is
     // exactly why contrasting a Warning with a Fatal could not have caught R63.
     const captured = await baselineWithBodyNoise();
-    const fatal = scanBody('Fatal error: Uncaught Error: boom', 'https://s.test/wp-admin/');
+    const fatal = scanBody('Fatal error: Uncaught Error: boom', 'https://s.test/wp-admin/')[0];
 
     expect(withoutBaselineNoise([fatal!], captured)).toEqual([fatal]);
   });

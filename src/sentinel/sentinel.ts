@@ -214,12 +214,15 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
         // Redacted like every other finding: the page may be sitting on the minted login URL
         // when it becomes unreadable (R51).
         kind: 'bodyscan', url: where === undefined ? undefined : redactLoginToken(where),
-        text: `the page body could not be read to scan it (${String(error)}) — a PHP diagnostic printed into the response would go unseen`,
+        // The ERROR is redacted too, not only the url (R51): a Playwright failure commonly
+        // quotes the URL it was on, and at the login step that is the minted-token URL.
+        text: `the page body could not be read to scan it (${redactLoginToken(String(error))}) — a PHP diagnostic printed into the response would go unseen`,
       });
       return;
     }
-    const finding = scanBody(html, currentUrl() ?? '');
-    if (finding) findings.push(finding);
+    // EVERY diagnostic this render printed (R64). Taking only the first let a genuine defect
+    // hide behind the site's own per-request noise, which renders earlier.
+    findings.push(...scanBody(html, currentUrl() ?? ''));
   }
 
   // Attach the live listeners BEFORE the baseline's round trip: anything already in flight

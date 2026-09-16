@@ -301,6 +301,22 @@ describe('sentinel.drain', () => {
     expect(findings[0]?.text).toContain('could not be read');
   });
 
+  it('redacts a minted token quoted by the unreadable-body ERROR, not just by the url (R51)', async () => {
+    // A Playwright navigation error commonly quotes the URL it was on, and at the login step
+    // that is the minted-token URL. This finding redacted its `url` field but interpolated the
+    // raw error into its text, writing the credential into the summary and into CI logs.
+    const { page, sentinel } = await setup();
+    page.current = 'https://s.test/?wpj_login=SECRETTOKENabcdef0123456789abcd';
+    page.content = async () => {
+      throw new Error('page.content: Target closed at https://s.test/?wpj_login=SECRETTOKENabcdef0123456789abcd');
+    };
+
+    const findings = await sentinel.drain();
+
+    expect(JSON.stringify(findings)).not.toContain('SECRETTOKEN');
+    expect(findings[0]?.text).toContain('<REDACTED>');
+  });
+
   it('still reads the log after an unreadable body — one lost signal must not lose the rest', async () => {
     const { page, sentinel } = await setup([
       { offset: 200, lines: ['[15-Sep-2026 22:40:00 UTC] PHP Warning:  boom in /x.php on line 1'], available: true },
@@ -469,7 +485,27 @@ describe('body cover across a whole journey (R41)', () => {
     expect(await sentinel.drain()).toHaveLength(1);
   });
 
-  it('keeps TWO DIFFERENT diagnostics on one screen as two findings (R63)', async () => {
+  it('reports BOTH diagnostics when ONE render prints two of them (R64)', async () => {
+    // `scanBody` used to return only the first match. On a site whose per-request noise renders
+    // early, that noise was the one match — correctly subtracted as noise — and a genuine defect
+    // further down the same render never became a finding at all. Where display-only settings
+    // leave bodyscan as the only signal, nothing backstops that: a lost signal reading as ok.
+    const both =
+      '<br />\n<b>Warning</b>:  boom in <b>/acme.php</b> on line <b>1</b><br />\n'
+      + '<p>content</p>\n'
+      + '<br />\n<b>Warning</b>:  Undefined array key "id" in <b>/other.php</b> on line <b>99</b><br />';
+    const { page, sentinel } = await setup();
+    page.navigations = [lands(page, 'https://s.test/only', both)];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/only');
+
+    expect((await sentinel.drain()).map((f) => f.text)).toEqual([
+      expect.stringContaining('boom in /acme.php on line 1'),
+      expect.stringContaining('Undefined array key "id" in /other.php on line 99'),
+    ]);
+  });
+
+  it('keeps a diagnostic a screen prints LATER as its own finding (R63)', async () => {
     // `collapseKey` de-duplicates a bodyscan on its TEXT. While that text was built from the
     // severity and the URL alone, two genuinely different defects on one screen produced the
     // same string and the second was discarded — a silent pass of exactly the kind the

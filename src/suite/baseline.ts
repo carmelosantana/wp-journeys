@@ -109,8 +109,10 @@ async function sampleWindow(agent: AgentClient, probe: Probe): Promise<Sample> {
 
   const bodyKeys = new Set<string>();
   if (body !== null) {
-    const finding = scanBody(body, probe.url);
-    if (finding) bodyKeys.add(bodyNoiseKey(finding));
+    // EVERY diagnostic the render printed (R64). Measuring only the first leaves the rest
+    // unmeasured, and an unmeasured per-request diagnostic is reported as a defect of whatever
+    // plugin happens to be under test, on every journey, for the whole run.
+    for (const finding of scanBody(body, probe.url)) bodyKeys.add(bodyNoiseKey(finding));
   }
 
   if (!start.available) return { log: null, body: bodyKeys };
