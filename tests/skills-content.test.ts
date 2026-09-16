@@ -3,6 +3,7 @@
  * does not: a skill teaching a tool, a variable or a manifest key that no longer exists is a
  * false green of its own.
  */
+import { spawnSync } from 'node:child_process';
 import { access, readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -10,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { ALL_ACTORS } from '../src/actors/roles.ts';
 import { skillsRoot } from '../src/commands/skills.ts';
 import { TOOLS } from '../src/mcp/tools.ts';
+import { SPAWN_TIMEOUT_MS } from './helpers/timeouts.ts';
 import { JOURNEY_KEYS, MANIFEST_KEYS, OPTIONAL_SETTING_KEYS, SCREEN_KEYS, SETTING_KEYS, parseManifest } from '../src/manifest/schema.ts';
 
 const RUNNING = join(skillsRoot(), 'wp-journeys-running');
@@ -129,5 +131,35 @@ describe('the authoring skill', () => {
     ]) {
       expect(text).toMatch(phrase);
     }
+  });
+});
+
+describe('README.md (R102)', { timeout: SPAWN_TIMEOUT_MS }, () => {
+  const ROOT = join(skillsRoot(), '..');
+
+  it('lists exactly the environment variables usage() names', async () => {
+    const result = spawnSync(process.execPath, [join(ROOT, 'bin', 'wpj.js')], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } });
+    const section = result.stderr.split('environment:\n')[1]?.split('\n\n')[0] ?? '';
+    const fromUsage = [...section.matchAll(/^ {2}([A-Z_]+) /gm)].map((m) => m[1]!);
+    expect(fromUsage.length).toBeGreaterThan(3);
+
+    const readme = await read(join(ROOT, 'README.md'));
+    const table = readme.split('## Environment')[1]?.split('\n## ')[0] ?? '';
+    const fromReadme = [...table.matchAll(/^\| `([A-Z_]+)` \|/gm)].map((m) => m[1]!);
+    expect(fromReadme).toEqual(fromUsage);
+  });
+
+  it('names every MCP tool and every command usage() offers', async () => {
+    const readme = await read(join(ROOT, 'README.md'));
+    for (const tool of Object.keys(TOOLS)) expect(readme).toContain(`\`${tool}\``);
+    for (const command of ['wpj run --plugin', 'wpj mcp', 'wpj skills install']) expect(readme).toContain(command);
+  });
+
+  it('warns that the companion mu-plugin is dev-only, and ships the license it names', async () => {
+    const readme = await read(join(ROOT, 'README.md'));
+    expect(readme).toMatch(/never install it on a production site/i);
+    const license = await read(join(ROOT, 'LICENSE'));
+    expect(license).toMatch(/^MIT License\n\nCopyright \(c\) 2026 Carmelo Santana\n/);
+    expect(JSON.parse(await read(join(ROOT, 'package.json'))).license).toBe('MIT');
   });
 });
