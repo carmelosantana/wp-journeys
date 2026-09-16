@@ -11,20 +11,34 @@ import type { Page } from '@playwright/test';
 
 import type { AgentClient } from '../agent/client.ts';
 import {
-  classifyConsole, classifyNavigation, classifyPhpLogLine, classifyRequestFailed,
+  BENIGN_NETWORK, classifyConsole, classifyNavigation, classifyPhpLogLine, classifyRequestFailed,
   classifyResponse, scanBody, type Expectation, type Finding,
 } from './classify.ts';
 
-/** A network fault worth one retry — the machine's network moved, the app did not break. */
-const RETRYABLE = /net::(ERR_NETWORK_CHANGED|ERR_NETWORK_IO_SUSPENDED|ERR_INTERNET_DISCONNECTED)/;
-
+/**
+ * One sentinel per journey — never share one across journeys.
+ *
+ * `drain()` reports everything seen since `installSentinel`, and de-duplicates across that
+ * whole list. A sentinel shared by two journeys would therefore drop journey 2's genuine 5xx
+ * on a URL journey 1 already reported, and journey 2 would read as clean. That is a false
+ * green of exactly the kind this class exists to prevent, so install a fresh sentinel (on a
+ * fresh page) for each journey rather than reusing one.
+ */
 export interface Sentinel {
-  /** Declare what the next navigations expect (e.g. that this actor must be denied). */
+  /**
+   * Declare what the NEXT navigation expects (e.g. that this actor must be denied).
+   *
+   * One-shot (R40): `visit()` consumes the expectation and reverts to strict. A sticky
+   * expectation is a silent pass — once a journey declared a denial for one screen, every
+   * later screen would accept a 401/403/login redirect as satisfying a denial nobody asked
+   * for, and a genuine permission regression would report nothing at all.
+   */
   expect(expectation: Expectation): void;
   /**
    * Navigate and assert the MAIN DOCUMENT's status. Every journey uses this instead of
    * `page.goto` — a bare goto asserts nothing about the status, and a 502 error page reads
-   * as perfectly good content.
+   * as perfectly good content. It also scans the body it landed on, so the scan covers the
+   * whole journey rather than only the screen showing at `drain()` time.
    */
   visit(page: Page, url: string): Promise<void>;
   /** Collect everything observed so far, including the PHP log delta. */
@@ -32,32 +46,79 @@ export interface Sentinel {
 }
 
 /**
- * A 5xx main document is seen twice: once by the `response` listener and once by `visit()`
- * (R1). Both say the same thing about the same URL, so keep the first and drop the echo.
- * Only `response` findings collide this way; every other kind is left alone.
+ * What makes two findings the same defect, or `null` for kinds that never collide.
+ *
+ * `response`: one status on one URL, seen by both the listener and `visit()`.
+ *
+ * `bodyscan`: now that `visit()` and `drain()` both scan (R41), one screen that never changed
+ * is scanned twice. Collapsing on the TEXT rather than the URL is what keeps that safe — the
+ * text carries the severity, so a screen that later prints a WORSE diagnostic still reports it
+ * as its own finding. A seen-URL guard would instead suppress that second, real defect, which
+ * is the silent pass this whole class exists to prevent.
  */
-function dedupe(findings: Finding[]): Finding[] {
-  const seen = new Set<string>();
+function collapseKey(finding: Finding): string | null {
+  // A space delimits unambiguously: the status is digits or empty, so it cannot run into
+  // the URL.
+  if (finding.kind === 'response') return `response ${finding.status ?? ''} ${finding.url ?? ''}`;
+  if (finding.kind === 'bodyscan') return `bodyscan ${finding.text}`;
+  return null;
+}
+
+/**
+ * A 5xx main document is seen twice: once by the `response` listener and once by `visit()`.
+ *
+ * The navigation's verdict WINS (R42). Playwright emits `response` as soon as status and
+ * headers arrive, necessarily before `goto()` resolves, so a plain keep-the-first always kept
+ * the subresource wording and always discarded the document verdict — "navigation to <url>
+ * returned HTTP 502 — the journey required a document it could act on", and the richer
+ * expected-denial text. Membership of `fromNavigation` is the tag; a bare last-wins would
+ * instead be decided by arrival order, which is not the thing that matters.
+ */
+function dedupe(findings: Finding[], fromNavigation: WeakSet<Finding>): Finding[] {
+  const winners = new Map<string, Finding>();
+  for (const finding of findings) {
+    const key = collapseKey(finding);
+    if (key === null) continue;
+    const held = winners.get(key);
+    if (!held) {
+      winners.set(key, finding);
+      continue;
+    }
+    if (!fromNavigation.has(held) && fromNavigation.has(finding)) winners.set(key, finding);
+  }
   return findings.filter((finding) => {
-    if (finding.kind !== 'response') return true;
-    // A space delimits unambiguously: the status is digits or empty, so it cannot run into
-    // the URL.
-    const key = `${finding.status ?? ''} ${finding.url ?? ''}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+    const key = collapseKey(finding);
+    return key === null || winners.get(key) === finding;
   });
 }
 
 export async function installSentinel(page: Page, agent: AgentClient): Promise<Sentinel> {
   const findings: Finding[] = [];
-  let expectation: Expectation = { denyExpected: false };
+
+  /** Findings produced by `visit()`'s own assertion, which outrank the listener's echo. */
+  const fromNavigation = new WeakSet<Finding>();
+
+  const STRICT: Expectation = { denyExpected: false };
+  let declared: Expectation = STRICT;
+
+  /** Read the declared expectation and revert to strict: it applies to ONE navigation (R40). */
+  function consumeExpectation(): Expectation {
+    const current = declared;
+    declared = STRICT;
+    return current;
+  }
 
   /**
    * Listener work that needs a round trip. Playwright does not await its listeners, so these
    * are still in flight when a journey calls `drain()`, and `drain()` waits for them.
    */
   const pending: Array<Promise<void>> = [];
+
+  /** Let every in-flight listener finish, so its finding is on the list before we act on it. */
+  async function settle(): Promise<void> {
+    // A handler may queue another while we wait, so keep going until nothing is left.
+    while (pending.length > 0) await Promise.all(pending.splice(0));
+  }
 
   /**
    * The byte offset the next log read starts from, or `null` when there is no usable one —
@@ -124,6 +185,31 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
     }
   }
 
+  /**
+   * Scan whatever the page is showing now.
+   *
+   * Called from `visit()` for each screen AND from `drain()` for the final state (R41). The
+   * body scan is the FALLBACK for the case where the log signal is lost, so scanning only the
+   * screen that happened to be showing at drain time would silently exclude most of a journey
+   * from the one signal left.
+   */
+  async function scanCurrentBody(): Promise<void> {
+    let html: string;
+    try {
+      html = await page.content();
+    } catch (error) {
+      // A body that cannot be read is a lost signal, not a clean one — and losing it must not
+      // cost the log signal too, so this is recorded and the caller carries on.
+      findings.push({
+        kind: 'bodyscan', url: currentUrl(),
+        text: `the page body could not be read to scan it (${String(error)}) — a PHP diagnostic printed into the response would go unseen`,
+      });
+      return;
+    }
+    const finding = scanBody(html, currentUrl() ?? '');
+    if (finding) findings.push(finding);
+  }
+
   // Attach the live listeners BEFORE the baseline's round trip: anything already in flight
   // would otherwise slip through that await observed by nobody.
   page.on('response', (response) => {
@@ -161,11 +247,12 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
 
   return {
     expect(next: Expectation) {
-      expectation = next;
+      declared = next;
     },
 
     /**
-     * Retries ONCE on a benign network fault, then asserts the document's status.
+     * Retries ONCE on a benign network fault, then asserts the document's status and scans
+     * the body it landed on.
      *
      * Navigation is retried because this runner provokes `ERR_NETWORK_CHANGED` itself by
      * running wp-cli mid-run. INPUT is never retried anywhere in this codebase: a retried
@@ -179,49 +266,55 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
             + 'three of the four signals would be silently missing.',
         );
       }
+      // Consumed before the navigation can throw, so a failed visit cannot leak its
+      // expectation onto the next one (R40).
+      const expectation = consumeExpectation();
+      const mark = findings.length;
+
       let response;
       try {
         response = await page.goto(url);
       } catch (error) {
-        if (!RETRYABLE.test(String(error))) throw error;
+        if (!BENIGN_NETWORK.test(String(error))) throw error;
+        // Discard everything the abandoned attempt observed (R43). Dedupe would absorb its
+        // duplicated 5xx, but nothing absorbs its console noise, and that noise would fail a
+        // journey that is actually fine. Settle first, so late-arriving findings from that
+        // attempt land inside the truncated region rather than after it.
+        await settle();
+        findings.length = mark;
         response = await page.goto(url);
       }
-      if (response) {
-        // The FINAL url, not the requested one (R1): WordPress denies a logged-out actor by
-        // redirecting to wp-login.php, and the requested URL cannot show that.
-        const finding = classifyNavigation(response.status(), response.url(), expectation);
-        if (finding) findings.push(finding);
-      } else {
+
+      if (!response) {
         // Playwright returns null when the navigation produced no response at all. Asserting
         // nothing here would let the journey continue against an unknown document.
         findings.push({
           kind: 'response', url,
           text: `navigation to ${url} produced no response to assert — the document's status could not be read`,
         });
+        // No document arrived, so there is nothing to settle or scan: waiting for networkidle
+        // would only burn the full Playwright timeout before failing.
+        return;
+      }
+
+      // The FINAL url, not the requested one: WordPress denies a logged-out actor by
+      // redirecting to wp-login.php, and the requested URL cannot show that.
+      const finding = classifyNavigation(response.status(), response.url(), expectation);
+      if (finding) {
+        findings.push(finding);
+        fromNavigation.add(finding);
       }
       await page.waitForLoadState('networkidle');
+      await scanCurrentBody();
     },
 
     async drain(): Promise<Finding[]> {
       // Settle the listeners that are mid-round-trip. Returning without waiting would drop
-      // their findings and report the window as clean. A handler may queue another while we
-      // wait, so keep going until nothing is left.
-      while (pending.length > 0) await Promise.all(pending.splice(0));
-
-      try {
-        const bodyFinding = scanBody(await page.content(), page.url());
-        if (bodyFinding) findings.push(bodyFinding);
-      } catch (error) {
-        // A body that cannot be read is a lost signal, not a clean one — and losing it must
-        // not cost the log signal too, so this is recorded and the drain carries on.
-        findings.push({
-          kind: 'bodyscan', url: currentUrl(),
-          text: `the page body could not be read to scan it (${String(error)}) — a PHP diagnostic printed into the response would go unseen`,
-        });
-      }
-
+      // their findings and report the window as clean.
+      await settle();
+      await scanCurrentBody();
       await readLog();
-      return dedupe(findings);
+      return dedupe(findings, fromNavigation);
     },
   };
 }

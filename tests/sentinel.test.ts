@@ -369,3 +369,175 @@ describe('sentinel.drain', () => {
     expect(calls).toEqual(['end', 'end']);
   });
 });
+
+/** A PHP warning printed into a page that still answers HTTP 200. */
+const PRINTED_WARNING = '<br />\n<b>Warning</b>:  boom in <b>/acme.php</b> on line <b>1</b><br />';
+
+/** A navigation that lands on `url`, rendering `body`. */
+function lands(page: FakePage, url: string, body = '<html>clean</html>') {
+  return () => {
+    page.current = url;
+    page.body = body;
+    return response(200, url);
+  };
+}
+
+describe('the expectation is one-shot (R40)', () => {
+  it('goes strict again on the next visit, so a later denial is not swallowed', async () => {
+    // A sticky expectation is a silent pass: once a journey declares denyExpected for ONE
+    // screen, every later screen would accept a 403 as satisfying a denial nobody asked for,
+    // and a genuine permission regression would report nothing at all.
+    const { page, sentinel } = await setup();
+    sentinel.expect({ denyExpected: true });
+    page.navigations = [
+      () => response(403, 'https://s.test/wp-admin/declared'),
+      () => response(403, 'https://s.test/wp-admin/later'),
+    ];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/declared');
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/later');
+
+    expect(await sentinel.drain()).toMatchObject([
+      { kind: 'response', status: 403, url: 'https://s.test/wp-admin/later' },
+    ]);
+  });
+
+  it('is consumed even when the declared navigation throws, so it cannot leak onward', async () => {
+    const { page, sentinel } = await setup();
+    sentinel.expect({ denyExpected: true });
+    page.navigations = [
+      () => { throw new Error('page.goto: net::ERR_CONNECTION_REFUSED at https://s.test/a'); },
+      () => response(403, 'https://s.test/b'),
+    ];
+
+    await expect(sentinel.visit(page.asPage(), 'https://s.test/a')).rejects.toThrow();
+    await sentinel.visit(page.asPage(), 'https://s.test/b');
+
+    expect(await sentinel.drain()).toMatchObject([{ kind: 'response', status: 403 }]);
+  });
+});
+
+describe('body cover across a whole journey (R41)', () => {
+  it('scans every screen it visits, not only the one showing when drain() is called', async () => {
+    // The body scan is the FALLBACK for exactly the case where the log signal is lost. Scanning
+    // only the final screen would silently exclude most of the journey from that fallback.
+    const { page, sentinel } = await setup();
+    page.navigations = [
+      lands(page, 'https://s.test/first', PRINTED_WARNING),
+      lands(page, 'https://s.test/second'),
+    ];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/first');
+    await sentinel.visit(page.asPage(), 'https://s.test/second');
+
+    expect(await sentinel.drain()).toMatchObject([
+      { kind: 'bodyscan', url: 'https://s.test/first' },
+    ]);
+  });
+
+  it('still scans the final state at drain(), which no visit() covers', async () => {
+    // A page that goes bad AFTER it loaded — a submit handler printing a notice — is only
+    // visible at drain time.
+    const { page, sentinel } = await setup();
+    page.navigations = [lands(page, 'https://s.test/only')];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/only');
+    page.body = PRINTED_WARNING;
+
+    expect(await sentinel.drain()).toMatchObject([{ kind: 'bodyscan' }]);
+  });
+
+  it('reports one defect once, though both visit() and drain() see the same screen', async () => {
+    const { page, sentinel } = await setup();
+    page.navigations = [lands(page, 'https://s.test/only', PRINTED_WARNING)];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/only');
+
+    expect(await sentinel.drain()).toHaveLength(1);
+  });
+});
+
+describe('navigation wording wins the de-duplication (R42)', () => {
+  it('keeps the document verdict, not the subresource echo that always arrives first', async () => {
+    // Playwright emits `response` as soon as status and headers arrive, necessarily before
+    // goto() resolves — so keep-the-first ALWAYS discarded the richer navigation text.
+    const { page, sentinel } = await setup();
+    page.navigations = [() => {
+      page.emit('response', response(502, 'https://s.test/wp-admin/'));
+      return response(502, 'https://s.test/wp-admin/');
+    }];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/');
+
+    const findings = await sentinel.drain();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.text).toContain('the journey required a document it could act on');
+  });
+
+  it('keeps the expected-denial verdict over the plain 5xx echo', async () => {
+    const { page, sentinel } = await setup();
+    sentinel.expect({ denyExpected: true });
+    page.navigations = [() => {
+      page.emit('response', response(500, 'https://s.test/wp-admin/acme'));
+      return response(500, 'https://s.test/wp-admin/acme');
+    }];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/wp-admin/acme');
+
+    const findings = await sentinel.drain();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.text).toContain('expected a permission denial');
+  });
+
+  it('still reports a subresource 5xx the navigation never saw', async () => {
+    const { page, sentinel } = await setup();
+    page.emit('response', response(500, 'https://s.test/wp-admin/admin-ajax.php'));
+
+    expect(await sentinel.drain()).toMatchObject([
+      { kind: 'response', status: 500, url: 'https://s.test/wp-admin/admin-ajax.php' },
+    ]);
+  });
+});
+
+describe('a retried navigation (R43)', () => {
+  it('discards what the abandoned attempt observed', async () => {
+    // Dedupe absorbs a duplicated 5xx but nothing absorbs console noise from an attempt that
+    // never completed, and that noise would fail a journey that is actually fine.
+    const { page, sentinel } = await setup();
+    page.navigations = [
+      () => {
+        page.emit('console', consoleMessage('error', 'Uncaught TypeError: from the abandoned attempt'));
+        throw new Error('page.goto: net::ERR_NETWORK_CHANGED at https://s.test/x');
+      },
+      () => response(200, 'https://s.test/x'),
+    ];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/x');
+
+    expect(await sentinel.drain()).toEqual([]);
+  });
+
+  it('keeps what was observed BEFORE the visit began', async () => {
+    const { page, sentinel } = await setup();
+    page.emit('console', consoleMessage('error', 'Uncaught TypeError: from an earlier step'));
+    page.navigations = [
+      () => { throw new Error('page.goto: net::ERR_NETWORK_CHANGED at https://s.test/x'); },
+      () => response(200, 'https://s.test/x'),
+    ];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/x');
+
+    expect(await sentinel.drain()).toMatchObject([{ kind: 'console' }]);
+  });
+});
+
+describe('a navigation with no response to assert', () => {
+  it('does not wait for networkidle, which would only burn the full timeout', async () => {
+    const { page, sentinel } = await setup();
+    page.navigations = [() => null];
+
+    await sentinel.visit(page.asPage(), 'https://s.test/x');
+
+    expect(page.loadStates).toEqual([]);
+  });
+});
