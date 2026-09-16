@@ -18,6 +18,7 @@ require_once __DIR__ . '/src/discovery.php';
 require_once __DIR__ . '/src/snapshot.php';
 require_once __DIR__ . '/src/logtail.php';
 require_once __DIR__ . '/src/actors.php';
+require_once __DIR__ . '/src/render.php';
 
 /** Read the live environment into the shape wpj_guard_verdict() expects. */
 function wpj_agent_env() {
@@ -146,7 +147,11 @@ function wpj_agent_render_endpoint() {
         return;
     }
     $raw = wp_unslash($_GET['wpj_render']);
-    if (!is_string($raw)) {
+    // R55: one bare shortcode tag, or nothing. This door carries no credential beyond the guard
+    // and echoes its output unescaped, so anything else would be reflected XSS on a dev site.
+    // Refusing SILENTLY is safe here, unlike the login door: the journey's own assertion is that
+    // the marker below is present, so a refused payload still fails loudly on the runner's side.
+    if (!wpj_render_payload_allowed($raw)) {
         return;
     }
     echo '<div data-wpj-render="1">' . do_shortcode($raw) . '</div>';

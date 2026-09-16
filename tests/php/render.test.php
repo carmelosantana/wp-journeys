@@ -1,0 +1,35 @@
+<?php
+/**
+ * The render door's payload gate (R55).
+ *
+ * do_shortcode()'s output is echoed unescaped, and this door carries no credential beyond the
+ * guard — so on any guarded dev site anyone who can reach it could otherwise run any registered
+ * shortcode with attacker-chosen attributes, and have arbitrary HTML reflected back. The gate is
+ * the shape the journey actually sends, and nothing else.
+ */
+require __DIR__ . '/assert.php';
+require __DIR__ . '/../../mu-plugin/src/render.php';
+
+// What src/suite/rendered-surface.ts actually sends: exactly [tag].
+wpj_assert('a bare shortcode tag is allowed', true, wpj_render_payload_allowed('[wpj_fixture]'));
+wpj_assert('digits, underscores and hyphens are allowed in a tag', true, wpj_render_payload_allowed('[acme_2-x]'));
+
+// Everything else is refused.
+wpj_assert('a script tag is refused', false, wpj_render_payload_allowed('<script>alert(1)</script>'));
+wpj_assert('a shortcode carrying attributes is refused', false, wpj_render_payload_allowed('[acme a="<img onerror=x>"]'));
+wpj_assert('markup after a valid tag is refused', false, wpj_render_payload_allowed('[acme]<script>alert(1)</script>'));
+wpj_assert('markup before a valid tag is refused', false, wpj_render_payload_allowed('<b>[acme]'));
+
+// $ in PHP matches before a trailing newline, so an anchor of ^...$ would let this through and
+// the whole gate would be one newline wide. \A...\z is what closes it.
+wpj_assert('a newline then markup after a valid tag is refused', false, wpj_render_payload_allowed("[acme]\n<script>alert(1)</script>"));
+wpj_assert('a bare trailing newline is refused', false, wpj_render_payload_allowed("[acme]\n"));
+
+wpj_assert('an empty payload is refused', false, wpj_render_payload_allowed(''));
+wpj_assert('a bare word is refused', false, wpj_render_payload_allowed('acme'));
+wpj_assert('an unclosed bracket is refused', false, wpj_render_payload_allowed('[acme'));
+wpj_assert('an empty tag is refused', false, wpj_render_payload_allowed('[]'));
+wpj_assert('two shortcodes at once are refused', false, wpj_render_payload_allowed('[acme][other]'));
+wpj_assert('a non-string payload is refused rather than cast into a warning', false, wpj_render_payload_allowed(array()));
+
+wpj_assert_exit();
