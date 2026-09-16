@@ -14,9 +14,11 @@
  */
 import { ALL_ACTORS, isAnonymous } from '../actors/roles.ts';
 import type { AgentClient } from '../agent/client.ts';
+import type { Config } from '../config.ts';
 import type { Snapshot } from '../discovery/snapshot.ts';
 import { projectSurface } from '../discovery/surface.ts';
 import type { Surface } from '../discovery/types.ts';
+import { messageOf } from '../errors.ts';
 import { classifyPhpLogLine, type Finding } from '../sentinel/phplog.ts';
 
 export interface Baseline {
@@ -28,6 +30,9 @@ export interface Baseline {
    */
   logNoise: string[];
 }
+
+/** One shape of ordinary WordPress request, used to see what it writes to the log. */
+type Probe = () => Promise<void>;
 
 /**
  * Create the runner's own users BEFORE the snapshot is taken (R36).
@@ -49,54 +54,106 @@ async function provisionActors(agent: AgentClient): Promise<void> {
 }
 
 /**
- * What this site writes to debug.log during one ordinary request.
- *
- * The sentinel's own `logDelta` round trip is itself a WordPress request, so anything the site
- * emits per request is written around that read and lands in the window — with nothing to
- * distinguish it from a diagnostic the journey's navigation provoked. Measuring it against the
- * same shape of request is what makes it subtractable.
- *
- * An unavailable log signal yields no noise rather than a guess: under-subtracting costs a
- * false red, which the sentinel is already reporting loudly, and over-subtracting would cost a
- * false green.
+ * Drive one request and classify the debug.log window it produced, or `null` when the log
+ * signal was unavailable and this sample therefore says nothing.
  */
-async function measureLogNoise(agent: AgentClient): Promise<string[]> {
+async function sampleWindow(agent: AgentClient, probe: Probe): Promise<Set<string> | null> {
   // Size-only, never logDelta(0): that pulls the whole file back to learn a length (R33).
   const start = await agent.logDelta('end');
-  if (!start.available) return [];
-  await agent.status();
+  if (!start.available) return null;
+  await probe();
   const delta = await agent.logDelta(start.offset);
-  if (!delta.available) return [];
+  if (!delta.available) return null;
 
   const texts = new Set<string>();
   for (const line of delta.lines) {
     const finding = classifyPhpLogLine(line);
     if (finding) texts.add(finding.text);
   }
-  return [...texts];
+  return texts;
 }
 
 /**
+ * What this site writes to debug.log on EVERY request of a given shape.
+ *
+ * Each probe is sampled TWICE and only the intersection is kept (R48). debug.log is shared:
+ * WP-Cron firing during a window, or the deactivate wp-cli call's own tail, drops in a line
+ * that is not per-request noise at all — and because the subtraction then removes every
+ * occurrence of that text for the whole run, a single-sample probe is the one route by which
+ * this mechanism could hide a genuine defect. Two samples make "per request" a measurement
+ * rather than an inference from n=1.
+ *
+ * An unavailable log signal yields no noise rather than a guess: under-subtracting costs a
+ * false red, which the sentinel is already reporting loudly, and over-subtracting would cost a
+ * false green.
+ */
+async function measureLogNoise(agent: AgentClient, probes: Probe[]): Promise<string[]> {
+  const noise = new Set<string>();
+  for (const probe of probes) {
+    const first = await sampleWindow(agent, probe);
+    const second = await sampleWindow(agent, probe);
+    if (!first || !second) continue;
+    for (const text of first) {
+      if (second.has(text)) noise.add(text);
+    }
+  }
+  return [...noise];
+}
+
+/**
+ * @param cfg        the target site; only its base URL is used, to drive a front-end render
  * @param deactivate turn the plugin under test OFF (caller supplies; usually a wp-cli call)
  * @param activate   turn it back ON
+ * @param fetchImpl  injectable so the probe is testable without a network
  */
 export async function captureBaseline(
   agent: AgentClient,
+  cfg: Config,
   deactivate: () => Promise<void>,
   activate: () => Promise<void>,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<Baseline> {
-  await deactivate();
+  const probes: Probe[] = [
+    // The shape the sentinel's own logDelta round trip makes, which is why its noise lands in
+    // every journey's window.
+    async () => { await agent.status(); },
+    // A front-end render (R49). wp_head, the theme and the whole template path never run on a
+    // REST request, so a REST-only probe is structurally blind to the most common source of
+    // per-request noise on a real site.
+    async () => {
+      const response = await fetchImpl(cfg.baseUrl);
+      // Drain the body: the render, and every diagnostic it writes, must be complete before
+      // the log window is read.
+      await response.text();
+    },
+  ];
+
+  let failure: unknown;
   try {
+    // INSIDE the try (R47). wp-cli can deactivate the plugin and still exit non-zero — a
+    // shutdown notice, a deactivation-hook warning, a timeout after the write landed. With this
+    // call outside, the site keeps the plugin OFF and every later journey drives a site the
+    // plugin is not even on, and passes.
+    await deactivate();
     await provisionActors(agent);
     const surface = projectSurface(await agent.discover());
     const snapshot = await agent.snapshot();
-    const logNoise = await measureLogNoise(agent);
+    const logNoise = await measureLogNoise(agent, probes);
     return { surface, snapshot, logNoise };
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    // Even when the read failed. A baseline that threw half way through would otherwise leave
-    // the plugin under test deactivated, and every journey after it would drive a site the
-    // plugin is not even installed on — and pass.
-    await activate();
+    try {
+      await activate();
+    } catch (reactivation) {
+      // Both facts matter: why the baseline was abandoned, and that the site is now missing the
+      // plugin it was testing. Reporting only the second hides the first.
+      if (failure === undefined) throw reactivation;
+      throw new Error(
+        `${messageOf(failure)}\n…and the plugin under test could not be reactivated afterwards: ${messageOf(reactivation)}`,
+      );
+    }
   }
 }
 
@@ -111,7 +168,8 @@ export async function captureBaseline(
  * The trade-off, stated plainly: a diagnostic from the plugin under test whose text is
  * character-for-character one the site already emits without it is subtracted too. By
  * definition that text is not attributable to the plugin, which is the same rule the surface
- * and snapshot deltas follow.
+ * and snapshot deltas follow — and the two-sample rule above is what keeps a one-off line from
+ * ever entering this set.
  */
 export function withoutBaselineNoise(findings: readonly Finding[], baseline: Baseline): Finding[] {
   const noise = new Set(baseline.logNoise);
