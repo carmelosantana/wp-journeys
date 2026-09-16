@@ -194,6 +194,13 @@ describe('parseManifest', () => {
         .toThrow(/journey "s": screens\[0\]\.url must be a non-empty string/);
     });
 
+    it('rejects a screen url that is not a path on the target site, at parse time', () => {
+      for (const url of ['https://evil.example/wp-admin/', '//evil.example/', '/\\evil.example/', 'wp-admin/', '/\t/evil.example/']) {
+        expect(() => parseManifest(screen({ url }), 'f.json'), url)
+          .toThrow(/journey "s": screens\[0\]\.url .* is not a path on the target site/);
+      }
+    });
+
     it('rejects a screen whose allow is not an array', () => {
       expect(() => parseManifest(screen({ allow: 'editor' }), 'f.json'))
         .toThrow(/journey "s": screens\[0\]\.allow must be an array of actors/);
@@ -207,6 +214,15 @@ describe('parseManifest', () => {
         settings: [{ url: '/wp-admin/admin.php?page=acme', field: '#t', value: 'v' }],
       });
       expect(() => parseManifest(bad, 'f.json')).toThrow(/journey "s": settings\[0\]\.readBack must be a non-empty string/);
+    });
+
+    it('rejects a setting url or readBack that is not a path on the target site, at parse time', () => {
+      const base = { url: '/wp-admin/x', field: '#t', value: 'v', readBack: '/' };
+      for (const [key, value] of [['url', 'https://evil.example/'], ['readBack', '//evil.example/'], ['readBack', 'relative/page']] as const) {
+        const bad = withJourney({ name: 's', actor: 'administrator', surface: 'both', settings: [{ ...base, [key]: value }] });
+        expect(() => parseManifest(bad, 'f.json'), `${key}=${value}`)
+          .toThrow(new RegExp(`journey "s": settings\\[0\\]\\.${key} .* is not a path on the target site`));
+      }
     });
 
     it('accepts an optional submit selector (first contact: Enter cannot submit a <textarea>)', () => {

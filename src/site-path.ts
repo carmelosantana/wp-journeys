@@ -2,7 +2,8 @@
  * Whether a string is a path on the TARGET site, and nothing that could leave it (R86).
  *
  * Shared by every place a caller hands the runner a site-relative path to navigate to — the
- * manifest's gate screen and the MCP server's `navigate` — so the rule has one definition.
+ * manifest's gate screen, screen urls, setting urls and readBacks, and the MCP server's
+ * `navigate` — so the rule has one definition.
  *
  * "Starts with a slash" is not enough: `//host/` is protocol-relative, browsers read `/\host/`
  * the same way, and the URL parser strips tabs and newlines anywhere, so `/\t/host/` becomes

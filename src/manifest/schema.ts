@@ -11,6 +11,7 @@
  */
 import { ALL_ACTORS, type Actor } from '../actors/roles.ts';
 import type { SurfaceAxis } from '../journeys/index.ts';
+import { isSitePath } from '../site-path.ts';
 
 export interface ManifestScreen {
   url: string;
@@ -105,6 +106,16 @@ function refuseUnknownKeys(object: Record<string, unknown>, known: readonly stri
   }
 }
 
+/**
+ * A manifest URL must be a path on the target site (R86), refused HERE rather than at visit time:
+ * the runner navigates a logged-in browser to it, and signs it when it opens a render door.
+ */
+function confineToSite(url: string, where: string, fail: Fail): void {
+  if (!isSitePath(url)) {
+    fail(`${where} ${JSON.stringify(url)} is not a path on the target site — start it with exactly one "/"`);
+  }
+}
+
 function parseActorList(raw: unknown, where: string, fail: Fail): Actor[] {
   if (!Array.isArray(raw)) return fail(`${where} must be an array of actors`);
   return raw.map((actor) => (isActor(actor) ? actor : fail(`${where}: unknown actor "${String(actor)}"`)));
@@ -115,6 +126,7 @@ function parseScreen(raw: unknown, index: number, actor: Actor, fail: Fail): Man
   if (!isObject(raw)) return fail(`${where} is not an object`);
   refuseUnknownKeys(raw, SCREEN_KEYS, (message) => fail(`${where}: ${message}`));
   if (!isNonEmptyString(raw.url)) fail(`${where}.url must be a non-empty string`);
+  confineToSite(raw.url as string, `${where}.url`, fail);
   const allow = parseActorList(raw.allow, `${where}.allow`, fail);
   const deny = parseActorList(raw.deny, `${where}.deny`, fail);
 
@@ -137,6 +149,8 @@ function parseSetting(raw: unknown, index: number, fail: Fail): ManifestSetting 
   for (const key of SETTING_KEYS) {
     if (!isNonEmptyString(raw[key])) fail(`${where}.${key} must be a non-empty string`);
   }
+  confineToSite(raw.url as string, `${where}.url`, fail);
+  confineToSite(raw.readBack as string, `${where}.readBack`, fail);
   // Present-but-empty is refused, not read as "use Enter": the author wrote the key.
   if (raw.submit !== undefined && !(typeof raw.submit === 'string' && raw.submit.trim() !== '')) {
     fail(`${where}.submit must be a non-empty string`);
