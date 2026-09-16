@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { Actor } from '../src/actors/roles.ts';
 import { outcomeOf, register } from '../src/journeys/index.ts';
-import type { Journey, JourneyResult } from '../src/journeys/types.ts';
+import type { Journey, JourneyResult, SurfaceAxis } from '../src/journeys/types.ts';
 
 function result(over: Partial<JourneyResult> = {}): JourneyResult {
   return {
@@ -43,15 +43,40 @@ describe('outcomeOf', () => {
   });
 });
 
+function journey(name: string, actor: Actor = Actor.EDITOR, surface: SurfaceAxis = 'admin'): Journey {
+  return { name, actor, surface, run: async () => result() };
+}
+
 describe('register', () => {
   it('keys journeys by name', () => {
-    const j = { name: 'a', actor: Actor.EDITOR, surface: 'both', run: async () => result() } as Journey;
-    expect(Object.keys(register(j))).toEqual(['a']);
+    expect(Object.keys(register(journey('a', Actor.EDITOR, 'both')))).toEqual(['a']);
+  });
+
+  it('keeps registration order across several journeys', () => {
+    const registry = register(journey('c'), journey('a'), journey('b'));
+    expect(Object.keys(registry)).toEqual(['c', 'a', 'b']);
   });
 
   it('refuses two journeys with the same name rather than silently dropping one', () => {
-    const a = { name: 'dup', actor: Actor.EDITOR, surface: 'admin', run: async () => result() } as Journey;
-    const b = { name: 'dup', actor: Actor.AUTHOR, surface: 'admin', run: async () => result() } as Journey;
+    const a = journey('dup', Actor.EDITOR);
+    const b = journey('dup', Actor.AUTHOR);
     expect(() => register(a, b)).toThrow(/duplicate journey name "dup"/);
+  });
+
+  it('accepts a journey whose name is a method inherited from Object.prototype', () => {
+    // A plain `{}` accumulator would find `toString` already "present" and refuse it as a duplicate.
+    const j = journey('toString');
+    const registry = register(j);
+    expect(Object.keys(registry)).toEqual(['toString']);
+    expect(registry['toString']).toBe(j);
+  });
+
+  it('stores a journey named __proto__ as a real key rather than swapping the prototype', () => {
+    // On a plain object `registry['__proto__'] = j` sets the prototype and the journey vanishes
+    // from Object.keys — the silent drop the duplicate check exists to prevent.
+    const j = journey('__proto__');
+    const registry = register(j);
+    expect(Object.keys(registry)).toEqual(['__proto__']);
+    expect(registry['__proto__']).toBe(j);
   });
 });

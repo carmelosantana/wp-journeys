@@ -24,11 +24,17 @@ export function outcomeOf(result: JourneyResult): 'pass' | 'fail' | 'skip' {
   return 'pass';
 }
 
-/** Build a registry keyed by name, refusing duplicates loudly. */
+/**
+ * Build a registry keyed by name, refusing duplicates loudly.
+ *
+ * The accumulator has no prototype: on a plain `{}` a journey named `toString` reads as already
+ * present, and one named `__proto__` swaps the prototype instead of becoming a key and vanishes
+ * from `Object.keys` — the silent drop the duplicate check exists to prevent.
+ */
 export function register(...journeys: Journey[]): Record<string, Journey> {
-  const registry: Record<string, Journey> = {};
+  const registry: Record<string, Journey> = Object.create(null);
   for (const journey of journeys) {
-    if (registry[journey.name]) {
+    if (Object.hasOwn(registry, journey.name)) {
       throw new Error(`duplicate journey name "${journey.name}" — names are the registry key.`);
     }
     registry[journey.name] = journey;
