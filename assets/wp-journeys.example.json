@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "plugin": "acme",
+  "gate": { "screen": "acme" },
+  "journeys": [
+    {
+      "name": "acme-settings-round-trip",
+      "actor": "administrator",
+      "surface": "both",
+      "settings": [
+        {
+          "url": "/wp-admin/admin.php?page=acme",
+          "field": "#acme_title",
+          "value": "Hello from wp-journeys",
+          "readBack": "/"
+        }
+      ]
+    },
+    {
+      "name": "acme-editor-is-denied",
+      "actor": "editor",
+      "surface": "admin",
+      "screens": [
+        { "url": "/wp-admin/admin.php?page=acme", "allow": [], "deny": ["editor"] }
+      ]
+    }
+  ]
+}

@@ -1,8 +1,12 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { interpret } from '../src/manifest/interpret.ts';
+import { loadManifest } from '../src/manifest/load.ts';
 import { parseManifest } from '../src/manifest/schema.ts';
 import { CFG, FakeBrowser, FakePage, fakeAgent, landsOn } from './helpers/fakes.ts';
 
@@ -424,5 +428,67 @@ describe('interpret', () => {
 
       await expect(run()).rejects.toThrow(/journey "plain": module "tests\/helpers\/fakes\.ts" does not default-export a Journey/);
     });
+  });
+});
+
+describe('loadManifest', () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function pluginDir(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'wpj-manifest-'));
+    dirs.push(dir);
+    return dir;
+  }
+
+  it('returns null when the plugin has no manifest — the zero-authoring case', async () => {
+    expect(await loadManifest(await pluginDir())).toBeNull();
+  });
+
+  it('parses a manifest that is present', async () => {
+    const dir = await pluginDir();
+    await writeFile(join(dir, 'wp-journeys.json'), JSON.stringify(valid));
+
+    const manifest = await loadManifest(dir);
+
+    expect(manifest?.plugin).toBe('acme');
+    expect(manifest?.journeys.map((j) => j.name)).toEqual(['acme-settings-round-trip', 'acme-custom']);
+  });
+
+  it('throws, naming the file, on invalid JSON — never null', async () => {
+    const dir = await pluginDir();
+    await writeFile(join(dir, 'wp-journeys.json'), '{ "version": 1, ');
+
+    await expect(loadManifest(dir)).rejects.toThrow(new RegExp(`^${join(dir, 'wp-journeys.json')}: invalid JSON — `));
+  });
+
+  it('throws, naming the file, on a manifest that does not validate', async () => {
+    const dir = await pluginDir();
+    await writeFile(join(dir, 'wp-journeys.json'), JSON.stringify({ ...valid, version: 2 }));
+
+    await expect(loadManifest(dir)).rejects.toThrow(`${join(dir, 'wp-journeys.json')}: "version" must be 1`);
+  });
+
+  it('throws when the manifest exists but cannot be read — only ENOENT is "absent"', async () => {
+    // A directory named wp-journeys.json, or a file without read permission, is not the same
+    // as no manifest: the author wrote one, and returning null would run none of it, silently.
+    const dir = await pluginDir();
+    await mkdir(join(dir, 'wp-journeys.json'));
+
+    await expect(loadManifest(dir)).rejects.toThrow(`${join(dir, 'wp-journeys.json')}: could not be read`);
+  });
+});
+
+describe('assets/wp-journeys.example.json', () => {
+  it('is a manifest the schema accepts, so the shipped example cannot drift from it', async () => {
+    const file = fileURLToPath(new URL('../assets/wp-journeys.example.json', import.meta.url));
+    const manifest = parseManifest(JSON.parse(await readFile(file, 'utf8')), file);
+
+    expect(interpret(manifest).map((j) => `${j.name}:${j.actor}:${j.surface}`)).toEqual([
+      'acme-settings-round-trip:administrator:both',
+      'acme-editor-is-denied:editor:admin',
+    ]);
   });
 });
