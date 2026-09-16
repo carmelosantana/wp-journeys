@@ -223,9 +223,10 @@ function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => st
                 + `on ${setting.url}, but it never appeared at ${setting.readBack}. Either the save was refused — a `
                 + 'validation or capability failure answers with a redirect back to the form, not an error — or the '
                 + (setting.submit !== undefined
-                  ? `submit never happened: clicking ${setting.submit} did not post the form.`
-                  : 'submit never happened: Enter submits an <input> inside a <form>, not a <textarea> or a field '
-                    + 'without one; name the form\'s submit control in "submit".'),
+                  ? `submit never happened (clicking ${setting.submit} did not post the form), `
+                  : 'submit never happened (Enter submits an <input> inside a <form>, not a <textarea> or a field '
+                    + 'without one; name the form\'s submit control in "submit"), ')
+                + `or ${setting.readBack} is not a page that shows this setting.`,
             );
           }
         }

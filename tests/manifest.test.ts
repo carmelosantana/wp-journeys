@@ -460,6 +460,9 @@ describe('interpret', () => {
       }]);
       expect(result.findings[0]?.text).toContain('never appeared at /');
       expect(result.findings[0]?.text).toContain('Enter');
+      // Step 6 of first contact: the save LANDED and the readBack URL simply did not show the
+      // setting, and the message offered only the two causes that were not the case.
+      expect(result.findings[0]?.text).toContain('or / is not a page that shows this setting');
     });
 
     it('fails, without writing, when what it is about to write is ALREADY visible (R66)', async () => {
