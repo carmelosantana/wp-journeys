@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  classifyConsole, classifyNavigation, classifyRequestFailed, classifyResponse, scanBody,
+  classifyConsole, classifyNavigation, classifyRequestFailed, classifyResponse, redactLoginToken, scanBody,
 } from '../src/sentinel/classify.ts';
 
 const allowed = { denyExpected: false };
@@ -349,5 +349,21 @@ describe('scanBody', () => {
 
     expect(finding?.text).toContain('<REDACTED>');
     expect(JSON.stringify(finding)).not.toContain('SECRETTOKEN');
+  });
+});
+
+describe('redactLoginToken, percent-encoded (M2)', () => {
+  it('redacts a token nested inside redirect_to, in either encoded separator and any case', () => {
+    const nested = 'https://s.test/wp-login.php?redirect_to=https%3A%2F%2Fs.test%2F%3Fwpj_login%3DTOKEN-1%26x%3D1';
+    expect(redactLoginToken(nested)).toBe(
+      'https://s.test/wp-login.php?redirect_to=https%3A%2F%2Fs.test%2F%3Fwpj_login%3D<REDACTED>%26x%3D1',
+    );
+    expect(redactLoginToken('/?redirect_to=%2F%3Fa%3D1%26WPJ_LOGIN%3dTOKEN-2')).toBe('/?redirect_to=%2F%3Fa%3D1%26WPJ_LOGIN%3d<REDACTED>');
+    expect(redactLoginToken('/x%3fwpj_login%3DTOKEN-3#frag')).toBe('/x%3fwpj_login%3D<REDACTED>#frag');
+  });
+
+  it('still redacts the plain form, and leaves an unrelated encoded parameter alone', () => {
+    expect(redactLoginToken('https://s.test/?wpj_login=TOKEN-4&y=2')).toBe('https://s.test/?wpj_login=<REDACTED>&y=2');
+    expect(redactLoginToken('/?redirect_to=%2F%3Fnot_wpj_login%3D1')).toBe('/?redirect_to=%2F%3Fnot_wpj_login%3D1');
   });
 });

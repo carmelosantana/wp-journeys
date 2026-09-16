@@ -53,7 +53,8 @@ const failures: string[] = [];
 /** Never print a frame that carries a live token or the secret — say so instead. */
 function leakIn(raw: string): string | null {
   if (secret.length > 0 && raw.includes(secret)) return 'the shared secret';
-  if (/[?&]wpj_login=(?!<REDACTED>)/i.test(raw)) return 'an unredacted login token';
+  // Plain and percent-encoded (a token inside `redirect_to`).
+  if (/(?:[?&]|%3F|%26)wpj_login(?:=|%3D)(?!<REDACTED>)/i.test(raw)) return 'an unredacted login token';
   return null;
 }
 

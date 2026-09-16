@@ -42,7 +42,11 @@ export const BENIGN_NETWORK = /net::(ERR_NETWORK_CHANGED|ERR_NETWORK_IO_SUSPENDE
  * finding would have to remember, and one of them would not.
  */
 export function redactLoginToken(url: string): string {
-  return url.replace(/([?&]wpj_login=)[^&#\s]*/gi, '$1<REDACTED>');
+  return url
+    .replace(/([?&]wpj_login=)[^&#\s]*/gi, '$1<REDACTED>')
+    // Percent-encoded too (M2): a login bounce carries the token URL inside `redirect_to`, where
+    // `?` `=` `&` arrive as %3F %3D %26. The value ends at the next encoded `&`, or a raw one.
+    .replace(/((?:%3F|%26)wpj_login%3D)(?:(?!%26)[^&#\s])*/gi, '$1<REDACTED>');
 }
 
 /**
