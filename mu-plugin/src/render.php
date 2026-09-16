@@ -4,12 +4,12 @@
  *
  * Pure: no WordPress functions, no I/O, so tests/php can assert it.
  *
- * Every other door the agent opens carries a credential — the REST and discovery doors the
- * shared secret, the login door a single-use token. The render door cannot: it is reached by a
- * browser navigation, which carries no header and has no token to spend. Its only protection is
- * the guard, so on a guarded development site ANY visitor who can reach the site can call it.
+ * The render doors are reached by a browser navigation, which carries no header, so they cannot
+ * use the shared-secret header the REST and discovery doors use. They carry a signed, expiring
+ * URL instead (wpj_render_signature_valid() below). The payload gate is kept as well: a signature
+ * says the runner asked for this render, not that the payload is safe to echo.
  *
- * And its output is echoed unescaped. Without this gate `?wpj_render=<script>…` is reflected
+ * Its output is echoed unescaped. Without this gate `?wpj_render=<script>…` is reflected
  * XSS, and `?wpj_render=[tag attr="…"]` runs any registered shortcode with attacker-chosen
  * attributes against the plugin under test. Dev-only is not the same as safe for everyone on
  * the LAN.
@@ -61,7 +61,7 @@ function wpj_render_wrap($raw, $out) {
 /**
  * The block door's payload gate (R57): one block name, in exactly the shape
  * WP_Block_Type_Registry::register() accepts, and nothing else. The same reasoning as the
- * shortcode gate above — this door carries no credential beyond the guard.
+ * shortcode gate above.
  *
  * @param mixed $raw the wpj_render_block query value, as received
  * @return bool
@@ -88,4 +88,65 @@ function wpj_render_block_payload_allowed($raw) {
 function wpj_render_block_wrap($registered, $dynamic, $out) {
     return '<div data-wpj-render-block="1" data-wpj-registered="' . ($registered ? '1' : '0')
         . '" data-wpj-dynamic="' . ($dynamic ? '1' : '0') . '">' . $out . '</div>';
+}
+
+/**
+ * How long a signed render URL may live, in seconds, measured from the moment it is checked.
+ * The runner signs for less than this; the cap is what stops a signature minted with a far
+ * future expiry from working forever.
+ */
+const WPJ_RENDER_MAX_TTL = 600;
+
+/**
+ * The render doors' signature: HMAC-SHA256 over the door, the payload and the expiry, keyed by
+ * the shared secret. src/agent/render.ts computes the same bytes; a test vector in both test
+ * suites pins the two to each other.
+ *
+ * @param string $kind    the door's query parameter: 'wpj_render' or 'wpj_render_block'
+ * @param string $payload the door's payload, as received
+ * @param string $exp     the expiry, as received
+ * @param string $secret
+ * @return string lowercase hex
+ */
+function wpj_render_signature($kind, $payload, $exp, $secret) {
+    return hash_hmac('sha256', $kind . "\n" . $payload . "\n" . $exp, $secret);
+}
+
+/**
+ * Whether a render door request carries a valid signature.
+ *
+ * Why the doors carry one at all: without it, anyone who could reach a guarded dev site — or a
+ * cross-site page steering a logged-in admin's browser there — could run any registered
+ * shortcode or block callback. The signature is bound to the door and the payload, so a leaked
+ * URL renders only that one thing, and only until it expires.
+ *
+ * Stateless on purpose, never single-use: the runner retries a navigation once on a benign
+ * network fault, and a spent token would turn that retry into a false red.
+ *
+ * Pure: the clock is a parameter, so tests/php can assert every edge.
+ *
+ * @param string $kind    the door's query parameter: 'wpj_render' or 'wpj_render_block'
+ * @param mixed  $payload the door's payload, as received
+ * @param mixed  $exp     wpj_exp as received: a decimal integer of unix seconds
+ * @param mixed  $sig     wpj_sig as received: lowercase hex
+ * @param string $secret  the shared secret
+ * @param int    $now     the current unix time
+ * @return bool
+ */
+function wpj_render_signature_valid($kind, $payload, $exp, $sig, $secret, $now) {
+    if (!is_string($payload) || !is_string($exp) || !is_string($sig) || !is_string($secret)) {
+        return false;
+    }
+    if (strlen($secret) < 16) {
+        return false;
+    }
+    // Digits only, and \z rather than $ so a trailing newline is not an integer.
+    if (preg_match('/\A[0-9]{1,12}\z/', $exp) !== 1) {
+        return false;
+    }
+    $expires = (int) $exp;
+    if ($now > $expires || $expires > $now + WPJ_RENDER_MAX_TTL) {
+        return false;
+    }
+    return hash_equals(wpj_render_signature($kind, $payload, $exp, $secret), $sig);
 }

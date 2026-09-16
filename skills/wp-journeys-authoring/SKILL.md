@@ -42,7 +42,7 @@ Every schema problem is refused loudly, by name. Fix the message; never work aro
 | Mistake | Fix |
 |---|---|
 | Expecting `deny` to be satisfied by a 404 or a 5xx | Only a 401, a 403 or the login redirect counts as a denial. A 404 means the URL is wrong, and the journey fails. |
-| `readBack` pointing at a page that never shows the setting | Point it at a frontend URL that renders the value, e.g. `/?wpj_render=%5Btag%5D`. |
+| `readBack` pointing at a page that never shows the setting | Point it at a frontend URL that renders the value, e.g. `/?wpj_render=%5Btag%5D`. Write it unsigned: the runner signs a render-door path for you at each visit. |
 | A `readBack` page that already shows the written text | The journey fails before it writes anything, because the text appearing afterwards would prove nothing. |
 | A module that calls `browser.newPage()` itself | Use `runAsActor`. Without it no sentinel is armed and no session is proven. |
 

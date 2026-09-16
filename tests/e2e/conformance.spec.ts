@@ -34,7 +34,7 @@ import { captureBaseline } from '../../src/suite/baseline.ts';
 import { conformanceSurface } from '../../src/suite/index.ts';
 import { lifecycle } from '../../src/suite/lifecycle.ts';
 import { adminSweep, blockRender, shortcodeRender } from '../../src/suite/rendered-surface.ts';
-import { shortcodeRenderDefect, shortcodeRenderUrl } from '../../src/agent/render.ts';
+import { blockRenderUrl, shortcodeRenderDefect, shortcodeRenderUrl } from '../../src/agent/render.ts';
 
 const PLUGIN = 'wpj-fixture';
 /** The ONE site these proofs may mutate. They uninstall a plugin and delete a cron event. */
@@ -257,7 +257,7 @@ for (const [label, tag, expected] of [
 ] as const) {
   test(`a registered tag followed by ${label} is never run with an attribute`, async () => {
     const result = await runAsActor(browser, cfg, agent, `lookalike:${label}`, Actor.ANONYMOUS, 'frontend', async (page, sentinel) => {
-      await sentinel.visit(page, shortcodeRenderUrl(tag));
+      await sentinel.visit(page, shortcodeRenderUrl(tag, cfg.secret));
       const defect = shortcodeRenderDefect(await page.content(), tag);
       if (defect) throw new Error(defect);
       return 0;
@@ -267,6 +267,68 @@ for (const [label, tag, expected] of [
     expect(JSON.stringify(result.findings)).toContain(expected);
   });
 }
+
+/**
+ * The render doors carry a signed, expiring URL, checked by the AGENT. Proven live: a door that
+ * accepted an unsigned or stale URL would let anyone who can reach the site run callbacks.
+ * A refusal serves the ordinary home page, so "refused" is "no render marker".
+ */
+test.describe('the render doors refuse anything but a fresh signature', () => {
+  const now = () => Math.floor(Date.now() / 1000);
+  const tag = () => {
+    expect(delta.shortcodes).toContain('wpj_fixture');
+    return 'wpj_fixture';
+  };
+
+  async function markerAt(path: string): Promise<boolean> {
+    let html = '';
+    await runAsActor(browser, cfg, agent, `door:${path}`, Actor.ANONYMOUS, 'frontend', async (page, sentinel) => {
+      await sentinel.visit(page, path);
+      html = await page.content();
+      return 0;
+    });
+    return /<div data-wpj-render(?:-block)?="1"/.test(html);
+  }
+
+  test('a signed shortcode render is served', async () => {
+    expect(await markerAt(shortcodeRenderUrl(tag(), cfg.secret))).toBe(true);
+  });
+
+  test('an unsigned shortcode render is refused', async () => {
+    expect(await markerAt(`/?wpj_render=${encodeURIComponent(`[${tag()}]`)}`)).toBe(false);
+  });
+
+  test('an expired signature is refused', async () => {
+    expect(await markerAt(shortcodeRenderUrl(tag(), cfg.secret, now() - 3600))).toBe(false);
+  });
+
+  test('a signature expiring more than 600 s ahead is refused', async () => {
+    expect(await markerAt(shortcodeRenderUrl(tag(), cfg.secret, now() + 3600))).toBe(false);
+  });
+
+  test('a signature made with another secret is refused', async () => {
+    expect(await markerAt(shortcodeRenderUrl(tag(), 'not-the-site-secret-0123456789ab'))).toBe(false);
+  });
+
+  test('a signature lifted from another payload is refused', async () => {
+    const other = shortcodeRenderUrl('wpj_not_a_shortcode', cfg.secret);
+    const lifted = `/?wpj_render=${encodeURIComponent(`[${tag()}]`)}&${other.split('&').slice(1).join('&')}`;
+    expect(await markerAt(lifted)).toBe(false);
+  });
+
+  test('an unsigned block render is refused, and a signed one is served', async () => {
+    const block = delta.blocks[0]!;
+    expect(await markerAt(`/?wpj_render_block=${encodeURIComponent(block)}`)).toBe(false);
+    expect(await markerAt(blockRenderUrl(block, cfg.secret))).toBe(true);
+  });
+
+  test('a shortcode signature is refused at the block door', async () => {
+    const block = delta.blocks[0]!;
+    const shortcode = shortcodeRenderUrl(tag(), cfg.secret);
+    const crossed = `/?wpj_render_block=${encodeURIComponent(block)}&${shortcode.split('&').slice(1).join('&')}`;
+    expect(await markerAt(crossed)).toBe(false);
+  });
+});
 
 for (const actor of [Actor.ADMINISTRATOR, Actor.ANONYMOUS]) {
   test(`every block the plugin added renders through the front end, as ${actor} (R57, R77)`, async () => {

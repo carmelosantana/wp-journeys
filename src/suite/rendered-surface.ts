@@ -113,7 +113,7 @@ export function shortcodeRender(
       return runAsActor(browser, cfg, agent, name, actor, 'frontend', async (page, sentinel) => {
         // Render through the front end so the shortcode runs in its real context.
         for (const tag of tags) {
-          await sentinel.visit(page, shortcodeRenderUrl(tag));
+          await sentinel.visit(page, shortcodeRenderUrl(tag, cfg.secret));
           const defect = shortcodeRenderDefect(await page.content(), tag);
           if (defect) throw new Error(defect);
         }
@@ -139,7 +139,7 @@ export function deprecatedShortcodeRender(plugin: string, tag: string, actor: Ac
     surface: 'frontend',
     run: async (browser, cfg, agent) => {
       const result = await runAsActor(browser, cfg, agent, name, actor, 'frontend', async (page, sentinel) => {
-        await sentinel.visit(page, shortcodeRenderUrl(tag));
+        await sentinel.visit(page, shortcodeRenderUrl(tag, cfg.secret));
         const defect = shortcodeRenderDefect(await page.content(), tag);
         if (defect) throw new Error(defect);
         return 0;
@@ -176,7 +176,7 @@ export function blockRender(plugin: string, delta: Surface, actor: Actor): Journ
       const result = await runAsActor(browser, cfg, agent, name, actor, 'frontend', async (page, sentinel, note) => {
         const statics: string[] = [];
         for (const block of delta.blocks) {
-          await sentinel.visit(page, blockRenderUrl(block));
+          await sentinel.visit(page, blockRenderUrl(block, cfg.secret));
           const verdict = blockRenderVerdict(await page.content(), block);
           if (verdict.defect) throw new Error(verdict.defect);
           if (verdict.dynamic) dynamicCount += 1;

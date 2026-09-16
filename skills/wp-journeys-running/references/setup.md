@@ -1,6 +1,6 @@
 # Setting up a target site
 
-> **DEV-ONLY.** Never install the mu-plugin on a production or publicly reachable site. Never set `WP_ENVIRONMENT_TYPE`, `WP_DEBUG` or `WPJ_AGENT` on a site that is not already a disposable local one: together with the secret, those settings are what open the agent. Once it is open, it mints logins for its `wpj_*` users and serves the site's `debug.log`. **The render doors have no credential:** anyone who can reach the site can make it run any registered shortcode (`?wpj_render=[tag]`, no attributes) or render any registered block (`?wpj_render_block=name`), and read the output.
+> **DEV-ONLY.** Never install the mu-plugin on a production or publicly reachable site. Never set `WP_ENVIRONMENT_TYPE`, `WP_DEBUG` or `WPJ_AGENT` on a site that is not already a disposable local one: together with the secret, those settings are what open the agent. Once it is open, it mints logins for its `wpj_*` users and serves the site's `debug.log`. **The render doors are signed and expire:** a shortcode (`?wpj_render=[tag]`, no attributes) or block (`?wpj_render_block=name`) renders only with a signature the runner makes from the secret, valid for at most ten minutes. That keeps a visitor who can merely reach the site, or a cross-site page steering a logged-in browser, from running callbacks. A leaked render URL still renders what it names until it expires.
 
 ## The companion mu-plugin
 

@@ -8,9 +8,20 @@
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 import type { AgentClient, LogDelta } from '../../src/agent/client.ts';
+import { RENDER_SIGNATURE_TTL, signRenderDoor } from '../../src/agent/render.ts';
 import type { Config } from '../../src/config.ts';
 
 export const CFG: Config = { baseUrl: 'https://s.test/', secret: 'x'.repeat(16) };
+
+/**
+ * Whether `actual` is `path` signed with `secret` for the render door, at whatever time it was
+ * signed: the expiry is read back off the URL and the signature recomputed from it.
+ */
+export function isSignedRenderPath(actual: string, path: string, secret: string = CFG.secret): boolean {
+  const exp = /[?&]wpj_exp=(\d+)/.exec(actual)?.[1];
+  if (exp === undefined) return false;
+  return signRenderDoor(path, secret, Number(exp) - RENDER_SIGNATURE_TTL) === actual;
+}
 
 export const CLEAN: LogDelta = { offset: 100, lines: [], available: true };
 

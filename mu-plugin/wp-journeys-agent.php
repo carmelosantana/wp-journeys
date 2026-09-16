@@ -6,11 +6,12 @@
  * PHP 7.4-compatible syntax on purpose: this file runs on whatever WordPress the runner is
  * pointed at, not on the runner's own toolchain.
  *
- * Three doors, one gate: the REST route serves most actions; discovery is served from
+ * Several doors, one guard: the REST route serves most actions; discovery is served from
  * admin-post.php, because only there is is_admin() true, and many plugins register their
- * admin menus only when it is; and a minted `?wpj_login=` URL logs a browser in as one of the
- * runner's own actors. That last door is opened by a navigation, which cannot carry the secret
- * header, so the single-use token in the URL is its credential — behind the same guard.
+ * admin menus only when it is; a minted `?wpj_login=` URL logs a browser in as one of the
+ * runner's own actors; and two render doors expand one shortcode or one block. The login and
+ * render doors are opened by a navigation, which cannot carry the secret header: the login
+ * door's credential is its single-use token, and the render doors' is a signed, expiring URL.
  */
 
 require_once __DIR__ . '/src/guard.php';
@@ -136,6 +137,21 @@ function wpj_agent_discover_endpoint() {
 add_action('template_redirect', 'wpj_agent_render_endpoint');
 
 /**
+ * Whether this render door request is signed for exactly this door and payload, and unexpired.
+ *
+ * Only called after the guard has passed, so WPJ_AGENT_SECRET is defined and long enough.
+ *
+ * @param string $kind    the door's query parameter
+ * @param mixed  $payload the payload, already unslashed
+ * @return bool
+ */
+function wpj_agent_render_signed($kind, $payload) {
+    $exp = isset($_GET['wpj_exp']) ? wp_unslash($_GET['wpj_exp']) : '';
+    $sig = isset($_GET['wpj_sig']) ? wp_unslash($_GET['wpj_sig']) : '';
+    return wpj_render_signature_valid($kind, $payload, $exp, $sig, WPJ_AGENT_SECRET, time());
+}
+
+/**
  * `?wpj_render=[tag]`: expand a shortcode and print it, wrapped in a marker.
  *
  * The wrapper is the point. Without it a refused guard serves the ordinary home page with a
@@ -150,8 +166,14 @@ function wpj_agent_render_endpoint() {
         return;
     }
     $raw = wp_unslash($_GET['wpj_render']);
-    // R55: one bare shortcode tag, or nothing. This door carries no credential beyond the guard
-    // and echoes its output unescaped, so anything else would be reflected XSS on a dev site.
+    // Signed for this door and this payload, and unexpired, or nothing. Without it anyone who
+    // can reach the site could run any registered shortcode. Refused the same silent way as the
+    // payload gate below, for the same reason.
+    if (!wpj_agent_render_signed('wpj_render', $raw)) {
+        return;
+    }
+    // R55: one bare shortcode tag, or nothing. This door echoes its output unescaped, so anything
+    // else would be reflected XSS on a dev site.
     // Refusing SILENTLY is safe here, unlike the login door: the journey's own assertion is that
     // the marker below is present, so a refused payload still fails loudly on the runner's side.
     if (!wpj_render_payload_allowed($raw)) {
@@ -173,6 +195,9 @@ function wpj_agent_render_block_endpoint() {
         return;
     }
     $name = wp_unslash($_GET['wpj_render_block']);
+    if (!wpj_agent_render_signed('wpj_render_block', $name)) {
+        return;
+    }
     if (!wpj_render_block_payload_allowed($name)) {
         return;
     }

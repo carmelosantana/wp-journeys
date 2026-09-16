@@ -34,7 +34,7 @@ import type { Browser, Page } from '@playwright/test';
 
 import { Actor, isAnonymous } from '../actors/roles.ts';
 import type { AgentClient } from '../agent/client.ts';
-import { shortcodeRenderDefect, shortcodeRenderUrl } from '../agent/render.ts';
+import { shortcodeRenderDefect, shortcodeRenderUrl, signRenderDoor } from '../agent/render.ts';
 import type { Config } from '../config.ts';
 import { messageOf } from '../errors.ts';
 import type { Journey, JourneyResult } from '../journeys/index.ts';
@@ -263,7 +263,9 @@ function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => st
 
           // Absent BEFORE the write. Change detection, not a state check; and the place a
           // matcher that finds everything would show itself first.
-          await sentinel.visit(page, setting.readBack);
+          // Signed at each visit, so a render-door readBack never carries an expired signature
+          // (the write between the two visits can take a while). Printed below UNSIGNED.
+          await sentinel.visit(page, signRenderDoor(setting.readBack, cfg.secret));
           if (readsBack(await visibleText(page, entry, setting.readBack), written)) {
             throw new Error(
               `read-back for "${entry.name}": ${JSON.stringify(written)} was already visible at ${setting.readBack} `
@@ -279,7 +281,7 @@ function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => st
           await page.waitForLoadState('networkidle');
 
           // Present AFTER. This is the assertion the whole entry exists for.
-          await sentinel.visit(page, setting.readBack);
+          await sentinel.visit(page, signRenderDoor(setting.readBack, cfg.secret));
           if (!readsBack(await visibleText(page, entry, setting.readBack), written)) {
             throw new Error(
               `read-back failed for "${entry.name}": wrote ${JSON.stringify(written)} to ${setting.field} `
@@ -295,7 +297,7 @@ function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => st
         }
 
         for (const tag of entry.shortcodes ?? []) {
-          await sentinel.visit(page, shortcodeRenderUrl(tag));
+          await sentinel.visit(page, shortcodeRenderUrl(tag, cfg.secret));
           const defect = shortcodeRenderDefect(await page.content(), tag);
           if (defect) throw new Error(defect);
         }

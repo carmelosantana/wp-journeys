@@ -136,7 +136,8 @@ describe('the dev-only warning in the running skill (R103)', () => {
     expect(text, where).toMatch(/DEV-ONLY/);
     expect(text, where).toMatch(/never install the mu-plugin on a production or publicly reachable site/i);
     expect(text, where).toMatch(/never set `WP_ENVIRONMENT_TYPE`, `WP_DEBUG` or `WPJ_AGENT` on a site that is not already a disposable local one/i);
-    expect(text, where).toMatch(/render doors have no credential/i);
+    expect(text, where).toMatch(/render doors are signed and expire/i);
+    expect(text, where).not.toMatch(/no credential/i);
   }
 
   it('warns in SKILL.md, at the step that sends the reader to install it', async () => {
@@ -233,6 +234,8 @@ describe('README.md (R102)', { timeout: SPAWN_TIMEOUT_MS }, () => {
   it('warns that the companion mu-plugin is dev-only, and ships the license it names', async () => {
     const readme = await read(join(ROOT, 'README.md'));
     expect(readme).toMatch(/never install it on a production site/i);
+    expect(readme).toMatch(/render doors\s+(?:>\s*)?are signed and expire/i);
+    expect(readme).not.toMatch(/have no credential/i);
     const license = await read(join(ROOT, 'LICENSE'));
     expect(license).toMatch(/^MIT License\n\nCopyright \(c\) 2026 Carmelo Santana\n/);
     expect(JSON.parse(await read(join(ROOT, 'package.json'))).license).toBe('MIT');

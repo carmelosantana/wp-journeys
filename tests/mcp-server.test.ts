@@ -15,7 +15,7 @@ import type { RawRegistries } from '../src/discovery/types.ts';
 import { PROTOCOL_VERSION, createMcpServer, serve, type McpDeps, type Rpc } from '../src/mcp/server.ts';
 import { TOOLS, describeTools } from '../src/mcp/tools.ts';
 import { SPAWN_TIMEOUT_MS } from './helpers/timeouts.ts';
-import { CLEAN, FakeBrowser, FakePage, fakeAgent, landsOn, response } from './helpers/fakes.ts';
+import { CLEAN, FakeBrowser, FakePage, fakeAgent, isSignedRenderPath, landsOn, response } from './helpers/fakes.ts';
 
 /** A test value standing in for the shared secret. Nothing real. */
 const SECRET = 'fixture-secret-not-real-0123456789';
@@ -529,6 +529,18 @@ describe('navigate (R86)', () => {
       expect(text, String(path)).toMatch(/path must start with exactly one "\/"/);
     }
     expect(h.page.gotos).toEqual([]);
+    await server.shutdown();
+  });
+
+  it('signs a path that opens a render door, with the configured secret, and leaves others alone', async () => {
+    const { h, server } = await anonymous();
+
+    await call(server, 'navigate', { path: '/?wpj_render=%5Bacme%5D' });
+    await call(server, 'navigate', { path: '/hello' });
+
+    expect(h.page.gotos).toHaveLength(2);
+    expect(isSignedRenderPath(h.page.gotos[0]!, '/?wpj_render=%5Bacme%5D', SECRET)).toBe(true);
+    expect(h.page.gotos[1]).toBe('/hello');
     await server.shutdown();
   });
 

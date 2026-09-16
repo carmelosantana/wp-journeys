@@ -8,7 +8,7 @@ import { CONTROL_SCREEN } from '../src/journeys/support.ts';
 import { accessMatrix } from '../src/suite/admin-access-matrix.ts';
 import { conformanceSurface, coreSuite } from '../src/suite/index.ts';
 import { adminSweep, blockRender, deprecatedShortcodeRender, shortcodeRender, sweepPlan } from '../src/suite/rendered-surface.ts';
-import { CFG, FakeBrowser, FakePage, fakeAgent, landsOn, response } from './helpers/fakes.ts';
+import { CFG, FakeBrowser, FakePage, fakeAgent, isSignedRenderPath, landsOn, response } from './helpers/fakes.ts';
 import type { Surface } from '../src/discovery/types.ts';
 
 const delta: Surface = {
@@ -267,7 +267,7 @@ describe('blockRender (R57, R78: what a block render can and cannot prove)', () 
     const result = await run();
 
     expect(outcomeOf(result)).toBe('pass');
-    expect(page.gotos.slice(1)).toEqual(['/?wpj_render_block=acme%2Fhello', '/?wpj_render_block=acme%2Fcard']);
+    expect(page.gotos.slice(1).map((url, i) => isSignedRenderPath(url, ['/?wpj_render_block=acme%2Fhello', '/?wpj_render_block=acme%2Fcard'][i]!))).toEqual([true, true]);
     expect(result.notes).toEqual([
       'the block render door exits before wp_head and wp_footer, so no block\'s frontend assets were exercised',
     ]);
@@ -279,7 +279,7 @@ describe('blockRender (R57, R78: what a block render can and cannot prove)', () 
     const result = await run();
 
     expect(outcomeOf(result)).toBe('pass');
-    expect(page.gotos).toEqual(['/?wpj_render_block=acme%2Fhello', '/?wpj_render_block=acme%2Fcard']);
+    expect(page.gotos.map((url, i) => isSignedRenderPath(url, ['/?wpj_render_block=acme%2Fhello', '/?wpj_render_block=acme%2Fcard'][i]!))).toEqual([true, true]);
   });
 
   it('notes a static block by name, and still passes on the dynamic one beside it', async () => {
@@ -354,13 +354,15 @@ describe('a declared-deprecated shortcode renders on its own row (R74, R80)', ()
   it('keeps declared tags out of the grouped row', async () => {
     const { page } = await runWith(shortcodeRender('acme', tags, Actor.ANONYMOUS, ['acme_old', 'acme_older']), []);
 
-    expect(page.gotos).toEqual(['/?wpj_render=%5Bacme%5D']);
+    expect(page.gotos).toHaveLength(1);
+    expect(isSignedRenderPath(page.gotos[0]!, '/?wpj_render=%5Bacme%5D')).toBe(true);
   });
 
   it('discounts the declared notice on the tag\'s own row, and SAYS so', async () => {
     const { page, result } = await runWith(deprecatedShortcodeRender('acme', 'acme_old', Actor.ANONYMOUS), [noticeNaming('acme_old')]);
 
-    expect(page.gotos).toEqual(['/?wpj_render=%5Bacme_old%5D']);
+    expect(page.gotos).toHaveLength(1);
+    expect(isSignedRenderPath(page.gotos[0]!, '/?wpj_render=%5Bacme_old%5D')).toBe(true);
     expect(outcomeOf(result)).toBe('pass');
     expect(result.notes).toEqual([
       'discounted 1 deprecation notice naming [acme_old], which the manifest declares deprecated (deprecated.shortcodes)',

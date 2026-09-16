@@ -63,4 +63,37 @@ wpj_assert('a non-string is refused', false, wpj_render_block_payload_allowed(ar
 wpj_assert('a registered dynamic block is marked so', '<div data-wpj-render-block="1" data-wpj-registered="1" data-wpj-dynamic="1"><p>hi</p></div>', wpj_render_block_wrap(true, true, '<p>hi</p>'));
 wpj_assert('an unregistered block is marked so', '<div data-wpj-render-block="1" data-wpj-registered="0" data-wpj-dynamic="0"></div>', wpj_render_block_wrap(false, false, ''));
 
+// The render doors' credential: a stateless HMAC bound to the door, the payload and an expiry.
+// The secret below is a dummy used only by the tests; it is not any site's secret.
+$secret = 'dummy-vector-secret-not-real-0123';
+$now = 1700000000;
+$exp = 1700000300;
+
+// THE SHARED VECTOR. tests/agent-render.test.ts asserts the same inputs give the same hex in
+// TypeScript, which is what pins the two computations to each other.
+$vector = '6510d389cb84d523b408e3ec71d45eafef56843ce4008ea63a3f0924a0526ed3';
+wpj_assert('the shared test vector signs to the pinned hex', $vector, wpj_render_signature('wpj_render', '[wpj_fixture]', (string) $exp, $secret));
+wpj_assert('a valid signature is accepted', true, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', (string) $exp, $vector, $secret, $now));
+wpj_assert('a valid signature is accepted up to the second it expires', true, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', (string) $exp, $vector, $secret, $exp));
+wpj_assert('a wrong signature is refused', false, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', (string) $exp, str_repeat('0', 64), $secret, $now));
+wpj_assert('an empty signature is refused', false, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', (string) $exp, '', $secret, $now));
+wpj_assert('a signature made with another secret is refused', false, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', (string) $exp, wpj_render_signature('wpj_render', '[wpj_fixture]', (string) $exp, 'another-secret-entirely-0123456789'), $secret, $now));
+wpj_assert('an expired exp is refused', false, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', (string) $exp, $vector, $secret, $exp + 1));
+$far = (string) ($now + 601);
+wpj_assert('an exp more than 600 s in the future is refused, even correctly signed', false, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', $far, wpj_render_signature('wpj_render', '[wpj_fixture]', $far, $secret), $secret, $now));
+$edge = (string) ($now + 600);
+wpj_assert('an exp exactly 600 s ahead is accepted', true, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', $edge, wpj_render_signature('wpj_render', '[wpj_fixture]', $edge, $secret), $secret, $now));
+foreach (array('1700000300.0', '1e9', ' 1700000300', '1700000300 ', '-1', '', 'abc', "1700000300\n") as $bad) {
+    wpj_assert('a non-integer exp ' . var_export($bad, true) . ' is refused, even correctly signed', false, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', $bad, wpj_render_signature('wpj_render', '[wpj_fixture]', $bad, $secret), $secret, $now));
+}
+wpj_assert('an array exp is refused rather than cast into a warning', false, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', array('1'), $vector, $secret, $now));
+wpj_assert('an array signature is refused rather than cast into a warning', false, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', (string) $exp, array($vector), $secret, $now));
+wpj_assert('an array payload is refused', false, wpj_render_signature_valid('wpj_render', array('[wpj_fixture]'), (string) $exp, $vector, $secret, $now));
+wpj_assert('a signature taken from a different payload is refused', false, wpj_render_signature_valid('wpj_render', '[other]', (string) $exp, $vector, $secret, $now));
+wpj_assert('a signature taken from the other door is refused', false, wpj_render_signature_valid('wpj_render_block', '[wpj_fixture]', (string) $exp, $vector, $secret, $now));
+$block = wpj_render_signature('wpj_render_block', 'wpj-fixture/dynamic', (string) $exp, $secret);
+wpj_assert('the block door accepts its own signature', true, wpj_render_signature_valid('wpj_render_block', 'wpj-fixture/dynamic', (string) $exp, $block, $secret, $now));
+wpj_assert('the shortcode door refuses a block signature', false, wpj_render_signature_valid('wpj_render', 'wpj-fixture/dynamic', (string) $exp, $block, $secret, $now));
+wpj_assert('a short secret signs nothing', false, wpj_render_signature_valid('wpj_render', '[wpj_fixture]', (string) $exp, wpj_render_signature('wpj_render', '[wpj_fixture]', (string) $exp, 'short'), 'short', $now));
+
 wpj_assert_exit();

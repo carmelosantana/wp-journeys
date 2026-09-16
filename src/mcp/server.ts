@@ -22,6 +22,7 @@ import type { Browser } from '@playwright/test';
 
 import { ALL_ACTORS, isAnonymous, type Actor } from '../actors/roles.ts';
 import { createAgentClient } from '../agent/client.ts';
+import { signRenderDoor } from '../agent/render.ts';
 import type { AgentClient } from '../agent/client.ts';
 import { loadConfig, SECRET_VAR } from '../config.ts';
 import type { Config } from '../config.ts';
@@ -283,9 +284,11 @@ export function createMcpServer(deps: McpDeps) {
       if (typeof expectDenied !== 'boolean') throw new Error('expect_denied must be a boolean');
       if (current === null) return NO_SESSION;
 
+      // A render-door path is signed here, as the manifest's readBack is: a client cannot sign it.
+      const target = signRenderDoor(path, loadConfig(deps.env).secret);
       // One-shot (R40): declared before EVERY visit, exactly as the journeys do.
       current.sentinel.expect({ denyExpected: expectDenied });
-      const verdict = await current.sentinel.visit(current.page, path);
+      const verdict = await current.sentinel.visit(current.page, target);
       const landed = current.sentinel.lastDocument();
       return {
         isError: verdict.length > 0,

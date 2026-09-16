@@ -10,7 +10,7 @@ import { CONTROL_SCREEN } from '../src/journeys/support.ts';
 import { interpret } from '../src/manifest/interpret.ts';
 import { loadManifest } from '../src/manifest/load.ts';
 import { parseManifest } from '../src/manifest/schema.ts';
-import { CFG, FakeBrowser, FakePage, fakeAgent, landsOn, response } from './helpers/fakes.ts';
+import { CFG, FakeBrowser, FakePage, fakeAgent, isSignedRenderPath, landsOn, response } from './helpers/fakes.ts';
 
 const valid = {
   version: 1,
@@ -457,6 +457,27 @@ describe('interpret', () => {
       expect(page.keys).toEqual(['Enter']);
     });
 
+    it('signs a readBack that opens a render door, before and after the write, since an author cannot', async () => {
+      const door = '/?wpj_render=%5Bacme_title%5D';
+      const { page, run } = arrange(
+        { ...journey, settings: [{ ...setting, readBack: door }] }, undefined, nonce,
+      );
+      page.navigations = [
+        ADMIN_LANDING, CONTROL,
+        landsOn('https://s.test/'), landsOn(`https://s.test${SCREEN}`),
+        (url) => { page.text = `Site title: ${WRITTEN}`; return response(200, url); },
+      ];
+
+      const result = await run();
+
+      expect(result.findings).toEqual([]);
+      expect(page.gotos).toHaveLength(5);
+      expect(page.gotos.slice(0, 2)).toEqual([MINT, CONTROL_SCREEN]);
+      expect(page.gotos[3]).toBe(SCREEN);
+      expect(isSignedRenderPath(page.gotos[2]!, door)).toBe(true);
+      expect(isSignedRenderPath(page.gotos[4]!, door)).toBe(true);
+    });
+
     it('clicks the declared submit control ONCE instead of pressing Enter', async () => {
       const { page, run } = arrange(
         { ...journey, settings: [{ ...setting, submit: '#submit' }] }, undefined, nonce,
@@ -629,7 +650,9 @@ describe('interpret', () => {
       const result = await run();
 
       expect(result.findings).toEqual([]);
-      expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, '/?wpj_render=%5Bacme%5D']);
+      expect(page.gotos.slice(0, 2)).toEqual([MINT, CONTROL_SCREEN]);
+      expect(page.gotos).toHaveLength(3);
+      expect(isSignedRenderPath(page.gotos[2]!, '/?wpj_render=%5Bacme%5D')).toBe(true);
     });
 
     it('fails when the render marker is absent — the endpoint never ran, so nothing was asserted', async () => {

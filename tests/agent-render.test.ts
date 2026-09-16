@@ -1,14 +1,51 @@
 import { describe, expect, it } from 'vitest';
 
-import { blockRenderVerdict, blockRenderUrl, shortcodeRenderDefect, shortcodeRenderUrl } from '../src/agent/render.ts';
+import {
+  RENDER_SIGNATURE_TTL, blockRenderVerdict, blockRenderUrl, renderSignature, shortcodeRenderDefect, shortcodeRenderUrl,
+  signRenderDoor,
+} from '../src/agent/render.ts';
+
+/** A dummy secret used only by the tests; it is not any site's secret. */
+const SECRET = 'dummy-vector-secret-not-real-0123';
+const NOW = 1700000000;
+
+/**
+ * THE SHARED VECTOR. tests/php/render.test.php asserts the same inputs give the same hex in PHP,
+ * which is what pins the two computations to each other.
+ */
+const VECTOR = '6510d389cb84d523b408e3ec71d45eafef56843ce4008ea63a3f0924a0526ed3';
+
+describe('renderSignature', () => {
+  it('signs the shared test vector to the hex the PHP agent computes', () => {
+    expect(renderSignature('wpj_render', '[wpj_fixture]', '1700000300', SECRET)).toBe(VECTOR);
+  });
+
+  it('binds the door as well as the payload', () => {
+    expect(renderSignature('wpj_render_block', 'wpj-fixture/dynamic', '1700000300', SECRET))
+      .toBe('63a9625886e81437539466a0bfdf44674d3861a584583aa505e4be0fdfe86ed2');
+  });
+});
 
 /** The agent's marker as Chromium serialises it, around what do_shortcode() returned. */
 const rendered = (expanded: '0' | '1', inner: string) =>
   `<html><head></head><body><div data-wpj-render="1" data-wpj-expanded="${expanded}">${inner}</div></body></html>`;
 
 describe('shortcodeRenderUrl', () => {
-  it('asks the render door for exactly one bare tag', () => {
-    expect(shortcodeRenderUrl('acme')).toBe('/?wpj_render=%5Bacme%5D');
+  it('asks the render door for exactly one bare tag, signed and expiring', () => {
+    expect(shortcodeRenderUrl('wpj_fixture', SECRET, NOW))
+      .toBe(`/?wpj_render=%5Bwpj_fixture%5D&wpj_exp=1700000300&wpj_sig=${VECTOR}`);
+  });
+
+  it('expires inside the agent\'s 600-second cap', () => {
+    expect(RENDER_SIGNATURE_TTL).toBeGreaterThan(0);
+    expect(RENDER_SIGNATURE_TTL).toBeLessThanOrEqual(600);
+  });
+
+  it('signs against the clock when no time is given', () => {
+    const before = Math.floor(Date.now() / 1000);
+    const exp = Number(/wpj_exp=(\d+)/.exec(shortcodeRenderUrl('acme', SECRET))?.[1]);
+    expect(exp).toBeGreaterThanOrEqual(before + RENDER_SIGNATURE_TTL);
+    expect(exp).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + RENDER_SIGNATURE_TTL);
   });
 });
 
@@ -49,7 +86,9 @@ const block = (registered: '0' | '1', dynamic: '0' | '1', inner = '') =>
 
 describe('blockRenderUrl', () => {
   it('asks the block door for one block by name', () => {
-    expect(blockRenderUrl('acme/hello')).toBe('/?wpj_render_block=acme%2Fhello');
+    expect(blockRenderUrl('wpj-fixture/dynamic', SECRET, NOW)).toBe(
+      '/?wpj_render_block=wpj-fixture%2Fdynamic&wpj_exp=1700000300&wpj_sig=63a9625886e81437539466a0bfdf44674d3861a584583aa505e4be0fdfe86ed2',
+    );
   });
 });
 
@@ -83,5 +122,39 @@ describe('blockRenderVerdict (R57, R78)', () => {
   it('fails, rather than guessing, when the marker does not say whether the block is dynamic', () => {
     expect(blockRenderVerdict('<div data-wpj-render-block="1" data-wpj-registered="1"></div>', 'acme/hello').defect)
       .toMatch(/does not say whether acme\/hello is dynamic/);
+  });
+});
+
+describe('signRenderDoor', () => {
+  it('signs a shortcode door path an author wrote, over the DECODED payload the agent reads', () => {
+    expect(signRenderDoor('/?wpj_render=%5Bwpj_fixture%5D', SECRET, NOW))
+      .toBe(`/?wpj_render=%5Bwpj_fixture%5D&wpj_exp=1700000300&wpj_sig=${VECTOR}`);
+  });
+
+  it('signs a block door path', () => {
+    expect(signRenderDoor('/?wpj_render_block=wpj-fixture/dynamic', SECRET, NOW))
+      .toBe('/?wpj_render_block=wpj-fixture/dynamic&wpj_exp=1700000300&wpj_sig=63a9625886e81437539466a0bfdf44674d3861a584583aa505e4be0fdfe86ed2');
+  });
+
+  it('returns every other path unchanged', () => {
+    for (const path of ['/', '/wp-admin/options-general.php', '/?p=1', '/?xwpj_render=1', '/sample-page/#wpj_render=1']) {
+      expect(signRenderDoor(path, SECRET, NOW), path).toBe(path);
+    }
+  });
+
+  it('keeps a fragment after the signature', () => {
+    expect(signRenderDoor('/?wpj_render=%5Bwpj_fixture%5D#top', SECRET, NOW))
+      .toBe(`/?wpj_render=%5Bwpj_fixture%5D&wpj_exp=1700000300&wpj_sig=${VECTOR}#top`);
+  });
+
+  it('replaces a stale signature rather than sending two', () => {
+    const signed = signRenderDoor('/?wpj_render=%5Bwpj_fixture%5D&wpj_exp=1&wpj_sig=abc', SECRET, NOW);
+    expect(signed.match(/wpj_sig=/g)).toHaveLength(1);
+    expect(new URLSearchParams(signed.split('?')[1]).get('wpj_sig')).toBe(VECTOR);
+    expect(new URLSearchParams(signed.split('?')[1]).get('wpj_exp')).toBe('1700000300');
+  });
+
+  it('refuses a path that opens both doors, which no single signature can cover', () => {
+    expect(() => signRenderDoor('/?wpj_render=%5Ba%5D&wpj_render_block=a/b', SECRET, NOW)).toThrow(/both render doors/);
   });
 });

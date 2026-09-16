@@ -1,13 +1,93 @@
 /**
- * The agent's render door, as the runner drives it: `?wpj_render=[tag]` expands one shortcode
- * on the front end and prints it inside a marker. Pure, and shared by every journey that
- * renders a shortcode — the discovered-surface suite and the manifest interpreter — so both
- * are held to one proof and neither depends on the other.
+ * The agent's render doors, as the runner drives them: `?wpj_render=[tag]` expands one shortcode
+ * on the front end and prints it inside a marker, and `?wpj_render_block=<name>` does the same
+ * for one block. Pure, and shared by every journey that renders — the discovered-surface suite,
+ * the manifest interpreter and the MCP server — so all are held to one proof.
+ *
+ * THE DOORS ARE SIGNED. A navigation cannot carry the secret header, so each door URL carries
+ * `wpj_exp` and `wpj_sig`: an HMAC-SHA256 over the door, the payload and the expiry, keyed by the
+ * shared secret. It stops anyone who can merely reach the site — or a cross-site page steering a
+ * logged-in admin's browser — from running shortcode and block callbacks. It is stateless rather
+ * than single-use because `sentinel.visit` retries a navigation once, and a spent token would
+ * turn that retry into a false red.
+ *
+ * A signed URL may appear in a finding or a log line. That is deliberate and low-risk: the
+ * signature is bound to one payload and expires within minutes, so a replay renders only what
+ * the printed URL already names. It is NOT redacted the way a login token is, because a login
+ * token is a session, and this is not. Never pass it through `page.route` headers either:
+ * Playwright re-sends those across redirects, including cross-origin ones.
  */
+import { createHmac } from 'node:crypto';
 
-/** The frontend URL that renders `[tag]` through the agent's render endpoint. */
-export function shortcodeRenderUrl(tag: string): string {
-  return `/?wpj_render=${encodeURIComponent(`[${tag}]`)}`;
+/** The shortcode door's query parameter, which is also its name inside the signature. */
+const SHORTCODE_DOOR = 'wpj_render';
+/** The block door's query parameter, likewise. */
+const BLOCK_DOOR = 'wpj_render_block';
+type RenderDoor = typeof SHORTCODE_DOOR | typeof BLOCK_DOOR;
+
+/**
+ * How long a signed URL lives, in seconds. The agent refuses anything more than 600 s ahead of
+ * its own clock, so half that leaves room for the two clocks to disagree in either direction.
+ */
+export const RENDER_SIGNATURE_TTL = 300;
+
+/** The hex HMAC the agent's `wpj_render_signature()` computes over the same three values. */
+export function renderSignature(door: RenderDoor, payload: string, exp: string, secret: string): string {
+  return createHmac('sha256', secret).update(`${door}\n${payload}\n${exp}`).digest('hex');
+}
+
+/** `&wpj_exp=…&wpj_sig=…` for one door and payload, expiring `RENDER_SIGNATURE_TTL` after `now`. */
+function signatureQuery(door: RenderDoor, payload: string, secret: string, now: number): string {
+  const exp = String(Math.floor(now) + RENDER_SIGNATURE_TTL);
+  return `wpj_exp=${exp}&wpj_sig=${renderSignature(door, payload, exp, secret)}`;
+}
+
+/** The current unix time in seconds, which is what the agent compares `wpj_exp` against. */
+function unixNow(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+/** The frontend URL that renders `[tag]` through the agent's render endpoint, signed. */
+export function shortcodeRenderUrl(tag: string, secret: string, now: number = unixNow()): string {
+  const payload = `[${tag}]`;
+  return `/?${SHORTCODE_DOOR}=${encodeURIComponent(payload)}&${signatureQuery(SHORTCODE_DOOR, payload, secret, now)}`;
+}
+
+/** Where a site path is only resolved, never visited. */
+const PROBE_BASE = 'https://target.invalid';
+
+/**
+ * Sign any site path that opens a render door, and return every other path unchanged.
+ *
+ * Manifest authors write `readBack: "/?wpj_render=%5Bacme%5D"`, and an MCP client navigates to
+ * whatever path it likes; neither can compute a signature. So the runner signs on their behalf,
+ * over the DECODED payload, which is what the agent reads from `$_GET`. A stale `wpj_exp` or
+ * `wpj_sig` already on the path is replaced, never sent twice.
+ *
+ * @param now unix seconds; the clock when omitted
+ */
+export function signRenderDoor(path: string, secret: string, now: number = unixNow()): string {
+  const url = new URL(path, PROBE_BASE);
+  const params = url.searchParams;
+  const doors = ([SHORTCODE_DOOR, BLOCK_DOOR] as const).filter((door) => params.has(door));
+  if (doors.length === 0) return path;
+  if (doors.length > 1) {
+    throw new Error(`${path} opens both render doors at once, which no single signature can cover — render one thing per path`);
+  }
+  const door = doors[0]!;
+  const query = signatureQuery(door, params.get(door) ?? '', secret, now);
+
+  if (!params.has('wpj_exp') && !params.has('wpj_sig')) {
+    // Appended to the path as written, so everything the author wrote reaches the site as-is.
+    const hash = path.indexOf('#');
+    const head = hash === -1 ? path : path.slice(0, hash);
+    const tail = hash === -1 ? '' : path.slice(hash);
+    return `${head}&${query}${tail}`;
+  }
+  params.delete('wpj_exp');
+  params.delete('wpj_sig');
+  const rest = params.toString();
+  return `${url.pathname}?${rest}&${query}${url.hash}`;
 }
 
 /**
@@ -45,9 +125,9 @@ export function shortcodeRenderDefect(html: string, tag: string): string | null 
   return null;
 }
 
-/** The frontend URL that renders one block through the agent's block door (R57). */
-export function blockRenderUrl(name: string): string {
-  return `/?wpj_render_block=${encodeURIComponent(name)}`;
+/** The frontend URL that renders one block through the agent's block door (R57), signed. */
+export function blockRenderUrl(name: string, secret: string, now: number = unixNow()): string {
+  return `/?${BLOCK_DOOR}=${encodeURIComponent(name)}&${signatureQuery(BLOCK_DOOR, name, secret, now)}`;
 }
 
 /** What one block render proved: a defect, or registration plus whether the block is dynamic. */

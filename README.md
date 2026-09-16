@@ -49,7 +49,10 @@ with the plugin inactive. If it is active when the run starts, the lifecycle row
 > its `debug.log`. It renders any registered shortcode (`?wpj_render=[tag]`) or block
 > (`?wpj_render_block=name`) on the front end. Its REST and discovery requests need the shared
 > secret, and logins need a single-use token that only the secret can mint. **The render doors
-> have no credential:** while the agent is enabled, anyone who can reach the site can call them.
+> are signed and expire:** each render URL carries an HMAC of the door, the payload and an expiry
+> at most ten minutes away, keyed by the secret. That stops a visitor who can merely reach the
+> site, or a cross-site page steering a logged-in admin's browser, from running shortcode and
+> block callbacks. A leaked render URL still renders exactly what it names until it expires.
 > They accept only a bare tag or a block name.
 
 It **fails closed.** It serves nothing unless all four of these hold: `WPJ_AGENT` is `true`,
