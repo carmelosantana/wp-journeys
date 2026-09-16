@@ -2,7 +2,7 @@
 /**
  * The agent's fail-closed guard.
  *
- * This mu-plugin exposes a debug log and can mint a login for an arbitrary user, so the
+ * This mu-plugin exposes a debug log and can mint a login for the runner's own users, so the
  * ONLY safe default is to refuse. Every condition must be affirmatively satisfied; a
  * missing or unrecognised value is a refusal, never a pass.
  *

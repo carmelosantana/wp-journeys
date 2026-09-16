@@ -2,7 +2,7 @@
 /**
  * The `wpj` entry point.
  *
- * Node 22 runs the TypeScript below it natively, with no loader and no build step. This file
+ * Node 22.18+ runs the TypeScript below it natively, with no loader and no build step. This file
  * stays plain JavaScript so the shebang line is the only thing between the shell and the CLI.
  *
  * Exiting lives here rather than in `src/runner/cli.ts`, which keeps that module importable —

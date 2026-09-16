@@ -1,6 +1,6 @@
 ---
 name: wp-journeys-running
-description: Use when running the wp-journeys conformance suite (`wpj run`, `wpj mcp`) against a WordPress plugin, when reading or explaining a wp-journeys run summary (ok, FAIL(n), skip, coverage, discovered), when chasing a `phplog`, `bodyscan`, `response`, `console`, `pageerror` or `assertion` finding, when a row reads `skip` and someone wants to call it a pass, when a lifecycle row reports orphaned options, when installing the companion mu-plugin (WPJ_AGENT, WPJ_AGENT_SECRET), or when pointing the runner at a wp-harness site or any other local WordPress.
+description: Use when running the wp-journeys conformance suite (`wpj run`, `wpj mcp`) against a WordPress plugin, when reading or explaining a wp-journeys run summary (ok, FAIL(n), skip, coverage, discovered), when chasing a `phplog`, `bodyscan`, `response`, `console`, `pageerror` or `assertion` finding, when a row reads `skip` and someone wants to call it a pass, when a lifecycle row reports orphaned options, when installing the companion mu-plugin (WPJ_AGENT, WPJ_AGENT_SECRET), or when pointing the runner at a wp-harness site or another disposable local WordPress.
 ---
 
 # Running wp-journeys

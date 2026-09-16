@@ -359,6 +359,16 @@ describe('what wpj run writes (one outbound filter)', () => {
   });
 });
 
+describe('usage()', { timeout: SPAWN_TIMEOUT_MS }, () => {
+  it('counts the WordPress users a run creates the way the runner does: one per logged-in actor', async () => {
+    const { ALL_ACTORS, isAnonymous } = await import('../src/actors/roles.ts');
+    const created = ALL_ACTORS.filter((actor) => !isAnonymous(actor)).length;
+    const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'];
+    const { stderr } = await quietly(() => main([], {}, noAgent, noLaunch));
+    expect(stderr.replace(/\s+/g, ' ')).toContain(`It also creates ${words[created]} WordPress users`);
+  });
+});
+
 describe('wpCommands', () => {
   it('builds the toggle commands against the operator’s wp-cli command', () => {
     const cmds = wpCommands('wp --path=/srv', 'acme');

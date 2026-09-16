@@ -363,8 +363,9 @@ function usage(reason: string): string {
       '                    resolve against, and must stay inside, this directory\n' +
       '\nA completed run UNINSTALLS the plugin under test. The last journey deactivates it and\n' +
       'runs its uninstall routine, so its options, tables, cron events and user meta are really\n' +
-      'deleted and it is left inactive; only the plugin FILES are kept. It also creates six\n' +
-      'WordPress users. Point this at a scratch site, never at anything you care about.\n' +
+      'deleted and it is left inactive; only the plugin FILES are kept. It also creates five\n' +
+      'WordPress users, one per logged-in actor, and logs each of them in. Point this at a\n' +
+      'scratch site, never at anything you care about.\n' +
       '\nThe orphan check is only sound on a site where the plugin has never been activated:\n' +
       'whatever an earlier activation created is already in the baseline and cannot be seen.\n' +
       'If the plugin is active when the run starts, the lifecycle row is a skip, not a pass.\n' +

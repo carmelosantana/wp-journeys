@@ -94,6 +94,13 @@ describe('the running skill', () => {
     expect(text).toContain(`${['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'][Object.keys(TOOLS).length]} tools`);
   });
 
+  it('describes itself for a disposable local WordPress, never any other local one', async () => {
+    const text = await read(join(RUNNING, 'SKILL.md'));
+    const description = text.match(/^description: (.+)$/m)?.[1] ?? '';
+    expect(description).not.toMatch(/any other local WordPress/i);
+    expect(description).toMatch(/disposable local WordPress/i);
+  });
+
   it('names every variable the runner reads', async () => {
     const text = await read(join(RUNNING, 'SKILL.md'));
     // From the modules that read them, so a renamed variable fails here (R103). HOME belongs to
@@ -268,6 +275,8 @@ describe('the Node floor (R103)', () => {
       }
     }
     expect(stated).toBeGreaterThanOrEqual(3);
+    // The entry point's own comment states it too.
+    expect(await read(join(ROOT, 'bin', 'wpj.js'))).toMatch(/Node 22\.18\+? runs the TypeScript/);
   });
 });
 
