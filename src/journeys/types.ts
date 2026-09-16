@@ -25,6 +25,9 @@ export interface JourneyResult {
   /**
    * Set when the journey's gate said its subject is not present. A skip is a THIRD outcome:
    * the journey did nothing and asserted nothing, so it must never render as `ok`.
+   *
+   * The two fields travel together: a `skipReason` without `skipped: true` is a contract
+   * violation that `outcomeOf` throws on, because that shape would otherwise pass (R39).
    */
   skipped?: boolean;
   skipReason?: string;

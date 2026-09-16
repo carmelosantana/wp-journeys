@@ -24,6 +24,16 @@ describe('outcomeOf', () => {
     expect(outcomeOf(result({ skipped: true, skipReason: 'plugin not active' }))).toBe('skip');
   });
 
+  it('throws, rather than passing, when a skip reason arrives without skipped: true', () => {
+    // A journey author who sets the reason on the gate path and forgets the flag has
+    // half-declared a skip. Returning 'pass' here is exactly the skip-rendered-as-ok the
+    // constraints forbid, so the ONE place that decides outcomes refuses the shape outright.
+    expect(() => outcomeOf(result({ skipped: false, skipReason: 'plugin not active' })))
+      .toThrow(/skipReason "plugin not active" without skipped: true/);
+    expect(() => outcomeOf(result({ skipReason: 'plugin not active' })))
+      .toThrow(/skipReason "plugin not active" without skipped: true/);
+  });
+
   it('reports fail, not skip, when a skipped journey still hit a finding on the way to skipping', () => {
     // The gate probe itself 5xx-ing is a real failure of the CORE, not an absent plugin.
     expect(outcomeOf(result({

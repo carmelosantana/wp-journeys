@@ -8,8 +8,17 @@ export type { Journey, JourneyResult, SurfaceAxis } from './types.ts';
  *
  * A finding always wins over a skip: if a journey skipped because its plugin is absent but
  * the gate probe itself hit a 5xx, that is a real failure of the core, not an absent plugin.
+ *
+ * A half-declared skip — `skipReason` set but `skipped` not `true` — is refused rather than
+ * read as a pass. Nothing downstream can tell that shape from a clean run, so the one place
+ * that could catch it must throw (R39).
  */
 export function outcomeOf(result: JourneyResult): 'pass' | 'fail' | 'skip' {
+  if (result.skipReason !== undefined && result.skipped !== true) {
+    throw new Error(
+      `journey "${result.name}" carries skipReason "${result.skipReason}" without skipped: true — a half-declared skip would render as a pass.`,
+    );
+  }
   if (result.findings.length > 0) return 'fail';
   if (result.skipped) return 'skip';
   return 'pass';
