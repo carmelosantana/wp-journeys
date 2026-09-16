@@ -16,6 +16,8 @@
  * Usage (wpjtest only — login_as provisions nothing new there, but it is still a live site):
  *   set -a; . ./.env; set +a
  *   node scripts/prove-mcp-session.ts
+ *
+ * `WPJ_PROOF_TIMEOUT_MS` overrides the overall timeout (default 120000).
  */
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -45,6 +47,17 @@ interface Frame {
 
 const wpj = fileURLToPath(new URL('../bin/wpj.js', import.meta.url));
 const child = spawn(process.execPath, [wpj, 'mcp'], { stdio: ['pipe', 'pipe', 'inherit'], env: process.env });
+
+/**
+ * A hung server fails the proof rather than hanging it (M9). Two minutes is several times a
+ * normal run, which is mostly one browser launch and a few page loads.
+ */
+const TIMEOUT_MS = Number(process.env.WPJ_PROOF_TIMEOUT_MS ?? 120_000);
+setTimeout(() => {
+  process.stdout.write(`\nPROOF FAILED: no result within ${TIMEOUT_MS} ms — the server was killed\n`);
+  child.kill('SIGKILL');
+  process.exit(1);
+}, TIMEOUT_MS).unref();
 const frames = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
 
 let nextId = 1;
