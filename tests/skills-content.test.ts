@@ -124,6 +124,16 @@ describe('the running skill', () => {
     expect(new Set(rows)).toEqual(new Set(SIGNAL_KINDS));
   });
 
+  it('fetches the browser through the clone\'s pinned Playwright, never npx', async () => {
+    for (const file of await markdownOf(RUNNING)) {
+      const text = await read(file);
+      for (const line of text.split('\n').filter((l) => /npx playwright/.test(l))) {
+        expect(line, file).toMatch(/never `npx playwright`/);
+      }
+    }
+    expect(await read(join(RUNNING, 'SKILL.md'))).toContain('pnpm --dir /path/to/wp-journeys browser');
+  });
+
   it('names all six actors', async () => {
     const text = await read(join(RUNNING, 'references', 'run-output.md'));
     for (const actor of ALL_ACTORS) expect(text).toContain(`\`${actor}\``);

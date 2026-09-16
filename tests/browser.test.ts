@@ -1,7 +1,12 @@
 import type { Browser } from '@playwright/test';
 import { describe, expect, it } from 'vitest';
 
+import { fileURLToPath } from 'node:url';
+
 import { launchChromium, MISSING_BROWSER } from '../src/runner/browser.ts';
+
+/** This clone's root, which is where the pinned Playwright lives. */
+const CLONE = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 
 /** Playwright 1.63's own message when the browser was never fetched, verbatim in shape. */
 const PLAYWRIGHT_MISSING = 'browserType.launch: Executable doesn\'t exist at /home/u/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell\n'
@@ -22,7 +27,10 @@ describe('launchChromium', () => {
     const message = (error as Error).message;
     // Where Playwright looked, so a PLAYWRIGHT_BROWSERS_PATH mismatch can be seen (R103).
     expect(message).toBe(`${MISSING_BROWSER} Playwright looked for it at /home/u/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell`);
-    expect(message).toContain('npx playwright install chromium');
+    // Through the clone's own pinned Playwright: an npx outside it fetches the registry's latest,
+    // bypassing the lockfile and the release-age gate.
+    expect(message).toContain(`pnpm --dir ${CLONE} browser`);
+    expect(message).not.toContain('npx');
     expect(message).not.toContain('\n');
     expect(message).not.toContain('╔');
     // The original is kept as the cause, so nothing is lost for someone debugging.

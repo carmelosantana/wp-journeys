@@ -16,7 +16,7 @@ description: Use when running the wp-journeys conformance suite (`wpj run`, `wpj
 | Run the suite | `wpj run --plugin <slug>` |
 | Serve the MCP tools over stdio | `wpj mcp` (no arguments) |
 | Link these skills into `~/.claude/skills` | `wpj skills install` |
-| Fetch the browser, once | `npx playwright install chromium` |
+| Fetch the browser, once | `pnpm --dir /path/to/wp-journeys browser` (the clone's pinned Playwright; never `npx playwright`, which bypasses the lockfile) |
 
 `wpj` means `node bin/wpj.js` run from a clone of wp-journeys on Node 22.18+ (after `pnpm install` and `pnpm browser`). It is not distributed on npm.
 
@@ -60,6 +60,6 @@ In the header, `coverage admin: X of Y` means X of the Y journeys aimed at that 
 | Reporting "N passed" when some of those rows were `skip` | Quote the header. Passed, failed and skipped are separate counts. |
 | Pointing `WPJ_MANIFEST_DIR` at the plugin root | Point it at the directory that holds `wp-journeys.json`. |
 | Treating `debug.log signal unavailable` as noise | It means PHP diagnostics were **not read**. Turn on `WP_DEBUG_LOG`. |
-| `wpj could not launch Chromium` | Run `npx playwright install chromium` once. The run stopped before it touched the site. |
+| `wpj could not launch Chromium` | Run the `pnpm --dir … browser` command the message names, once. The run stopped before it touched the site. |
 
 Writing a manifest, and the false greens to avoid, are covered by **wp-journeys-authoring**.

@@ -122,7 +122,9 @@ touched. `package.json` is now `"private": true`, so nothing can be published by
 
 **What was kept, because it helps people running from a clone.** A launch that fails with
 Playwright's `Executable doesn't exist` banner becomes one line naming
-`npx playwright install chromium` (`src/runner/browser.ts`). `wpj run` also launches the browser
+`pnpm --dir <clone> browser` (`src/runner/browser.ts`), which uses the clone's pinned Playwright.
+It used to name `npx playwright install chromium`, which outside the clone pulls the registry's
+latest Playwright and bypasses the lockfile and the release-age gate. `wpj run` also launches the browser
 before it touches the site.
 
 **What the later npm decision must settle:**
