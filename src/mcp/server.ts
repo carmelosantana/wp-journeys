@@ -30,6 +30,7 @@ import { projectSurface } from '../discovery/surface.ts';
 import { messageOf, redactSecret } from '../errors.ts';
 import { outcomeOf, register } from '../journeys/index.ts';
 import { openActorSession, type ActorSession } from '../journeys/support.ts';
+import { BODY_TIMEOUT_MS } from '../manifest/interpret.ts';
 import { plural, renderFinding, renderJourney } from '../report/summary.ts';
 import { manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape } from '../runner/cli.ts';
 import { redactLoginToken } from '../sentinel/classify.ts';
@@ -239,7 +240,7 @@ export function createMcpServer(deps: McpDeps) {
 
     async read_page() {
       if (current === null) return NO_SESSION;
-      const text = await current.page.locator('body').innerText({ timeout: 5_000 });
+      const text = await current.page.locator('body').innerText({ timeout: BODY_TIMEOUT_MS });
       return { text: `${current.page.url()}\n\n${text}` };
     },
 

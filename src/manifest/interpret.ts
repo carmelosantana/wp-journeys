@@ -117,9 +117,10 @@ function freshNonce(): string {
 /**
  * How long to wait for a `<body>` on a page that has ALREADY finished loading (`visit()`
  * awaited networkidle). Playwright's 30s default is for a body that is still arriving; here a
- * body that is not there yet is a body that is not coming.
+ * body that is not there yet is a body that is not coming. Shared with the MCP server's
+ * `read_page`, which reads a page that has likewise already settled.
  */
-const BODY_TIMEOUT_MS = 5_000;
+export const BODY_TIMEOUT_MS = 5_000;
 
 /**
  * The body's VISIBLE text, which is what a setting reaches. Matching the raw HTML source
