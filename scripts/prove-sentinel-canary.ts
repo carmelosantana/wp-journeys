@@ -53,8 +53,17 @@ import { frontendRenders } from '../src/suite/frontend-renders.ts';
 /** The ONE site this may mutate. It writes and deletes an option. */
 const TARGET = 'wpjtest';
 const ARMED_OPTION = 'wpj_canary_armed';
-/** What the canary's deliberate defect says; the armed leg must name it. */
-const EXPECTED = /notset|Undefined variable|array offset|printed into the response body/i;
+/**
+ * What the CANARY'S OWN defect says — and nothing more general.
+ *
+ * This is the specificity assertion that stops the proof passing for the wrong reason, so it
+ * must not match text that every body finding carries. It once included `printed into the
+ * response body`, which `scanBody` puts in EVERY bodyscan: any unrelated body diagnostic then
+ * satisfied the armed leg, so a canary that silently failed to arm — R53's original hazard, the
+ * WP_DEBUG and wp_get_environment_type gate — still printed PROOF OK. It also made the baseline
+ * guard below abort with a misleading verdict on a site that merely has unrelated body noise.
+ */
+const EXPECTED = /notset|Undefined variable|array offset/i;
 
 const run = promisify(execFile);
 const cfg = loadConfig(process.env);
