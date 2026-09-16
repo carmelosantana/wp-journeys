@@ -127,6 +127,32 @@ function wpj_agent_discover_endpoint() {
     wp_send_json($result, 200);
 }
 
+// The fourth door: rendering a shortcode on the front end, so the runner can prove one expands
+// in its real template context. Behind the same guard, so it cannot exist on a real site.
+add_action('template_redirect', 'wpj_agent_render_endpoint');
+
+/**
+ * `?wpj_render=[tag]`: expand a shortcode and print it, wrapped in a marker.
+ *
+ * The wrapper is the point. Without it a refused guard serves the ordinary home page with a
+ * 200, and a journey asserting only "the page loaded" would pass having rendered nothing. The
+ * marker is emitted ONLY here, so its presence is what proves this endpoint ran.
+ */
+function wpj_agent_render_endpoint() {
+    if (!isset($_GET['wpj_render'])) {
+        return;
+    }
+    if (wpj_guard_verdict(wpj_agent_env()) !== '') {
+        return;
+    }
+    $raw = wp_unslash($_GET['wpj_render']);
+    if (!is_string($raw)) {
+        return;
+    }
+    echo '<div data-wpj-render="1">' . do_shortcode($raw) . '</div>';
+    exit;
+}
+
 // The third door: a browser following a minted URL. It runs on every request, so it does as
 // little as possible before deciding this is not one of ours.
 add_action('init', 'wpj_agent_login_endpoint');
