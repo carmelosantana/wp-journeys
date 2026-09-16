@@ -214,6 +214,26 @@ describe('lifecycle of the server (R85, R90)', () => {
     expect(h.browser.browserClosed).toBe(1);
   });
 
+  it('scrubs the secret and any token from a shutdown failure written to stderr (M1)', async () => {
+    const h = harness();
+    h.browser.close = async () => { throw new Error(`browser said ${SECRET} at https://s.test/?wpj_login=${TOKEN}`); };
+    const written: string[] = [];
+    const original = process.stderr.write;
+    process.stderr.write = ((chunk: string) => { written.push(String(chunk)); return true; }) as typeof process.stderr.write;
+    try {
+      await converse([
+        JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'login_as', arguments: { actor: 'anonymous' } } }),
+      ], h.deps);
+    } finally {
+      process.stderr.write = original;
+    }
+
+    const stderr = written.join('');
+    expect(stderr).toContain('wpj mcp: shutdown failed: browser said <REDACTED>');
+    expect(stderr).not.toContain(SECRET);
+    expect(stderr).not.toContain(TOKEN);
+  });
+
   it('closes nothing it never opened', async () => {
     const h = harness();
     await converse([JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })], h.deps);

@@ -134,6 +134,19 @@ describe('the wpj entry point', () => {
     expect(stderr).toMatch(/wph mount.*activates/s);
   });
 
+  it('scrubs the secret from a fatal error on its way to stderr (M1)', () => {
+    // The loader quotes the refused hostname, and here the operator pasted the secret into it.
+    const secret = 'fixture-secret-not-real-0123456789';
+    const result = spawnSync(process.execPath, [wpj, 'run', '--plugin', 'acme'], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH ?? '', WPJ_BASE_URL: `https://${secret}.example.com/`, WPJ_AGENT_SECRET: secret },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/refusing a non-local target: <REDACTED>\.example\.com/);
+    expect(result.stdout + result.stderr).not.toContain(secret);
+  });
+
   it('names the environment variables without ever carrying a value for the secret', () => {
     const { stdout, stderr } = runCli([]);
     const all = stdout + stderr;

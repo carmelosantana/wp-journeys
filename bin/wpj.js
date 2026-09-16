@@ -8,6 +8,7 @@
  * Exiting lives here rather than in `src/runner/cli.ts`, which keeps that module importable —
  * and therefore testable — without ending the process that imports it.
  */
+import { redactSecret } from '../src/errors.ts';
 import { main } from '../src/runner/cli.ts';
 
 main().then(
@@ -17,7 +18,9 @@ main().then(
   (error) => {
     // A failure before any journey ran: bad config, an unreachable agent, a baseline that could
     // not be captured. It is a failed run, not a clean one.
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    // The secret never reaches stderr, even if a message ends up quoting it (M1).
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${redactSecret(message, process.env.WPJ_AGENT_SECRET)}\n`);
     process.exit(1);
   },
 );

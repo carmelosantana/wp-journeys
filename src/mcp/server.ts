@@ -27,7 +27,7 @@ import type { AgentClient } from '../agent/client.ts';
 import { loadConfig } from '../config.ts';
 import type { Config } from '../config.ts';
 import { projectSurface } from '../discovery/surface.ts';
-import { messageOf } from '../errors.ts';
+import { messageOf, redactSecret } from '../errors.ts';
 import { outcomeOf, register } from '../journeys/index.ts';
 import { openActorSession, type ActorSession } from '../journeys/support.ts';
 import { plural, renderFinding, renderJourney } from '../report/summary.ts';
@@ -107,9 +107,7 @@ export function createMcpServer(deps: McpDeps) {
    * rather than a property of today's messages.
    */
   function outbound(text: string): string {
-    const secret = deps.env.WPJ_AGENT_SECRET ?? '';
-    const scrubbed = secret.length >= 16 ? text.split(secret).join('<REDACTED>') : text;
-    return redactLoginToken(scrubbed);
+    return redactLoginToken(redactSecret(text, deps.env.WPJ_AGENT_SECRET));
   }
 
   /** The loader `wpj run` uses; its message is the tool's error when configuration is broken (R89). */
@@ -410,7 +408,7 @@ export async function serve(
       await server.shutdown();
     } catch (error) {
       // Diagnostics go to stderr, never to the protocol stream (R90).
-      process.stderr.write(`wpj mcp: shutdown failed: ${redactLoginToken(messageOf(error))}\n`);
+      process.stderr.write(`wpj mcp: shutdown failed: ${redactLoginToken(redactSecret(messageOf(error), deps.env.WPJ_AGENT_SECRET))}\n`);
     } finally {
       diverted?.restore();
     }

@@ -24,6 +24,9 @@ function isLocalHost(hostname: string): boolean {
   );
 }
 
+/** The shortest shared secret the runner accepts — and so the shortest `redactSecret` scrubs. */
+export const MIN_SECRET_LENGTH = 16;
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const baseUrl = env.WPJ_BASE_URL;
   if (!baseUrl) {
@@ -36,8 +39,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     );
   }
   const secret = env.WPJ_AGENT_SECRET ?? '';
-  if (secret.length < 16) {
-    throw new Error('WPJ_AGENT_SECRET must be at least 16 characters.');
+  if (secret.length < MIN_SECRET_LENGTH) {
+    throw new Error(`WPJ_AGENT_SECRET must be at least ${MIN_SECRET_LENGTH} characters.`);
   }
   return { baseUrl, secret };
 }
