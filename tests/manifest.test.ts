@@ -6,10 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { errors } from '@playwright/test';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { register } from '../src/journeys/index.ts';
 import { CONTROL_SCREEN } from '../src/journeys/support.ts';
 import { interpret } from '../src/manifest/interpret.ts';
 import { loadManifest } from '../src/manifest/load.ts';
 import { parseManifest } from '../src/manifest/schema.ts';
+import { runSuite } from '../src/runner/cli.ts';
+import type { Baseline } from '../src/suite/baseline.ts';
 import { CFG, FakeBrowser, FakePage, fakeAgent, isSignedRenderPath, landsOn, response } from './helpers/fakes.ts';
 
 const valid = {
@@ -695,6 +698,11 @@ describe('interpret', () => {
   });
 
   describe('gate (R76: the plugin must be live before any authored journey counts)', () => {
+    const NO_NOISE: Baseline = {
+      surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
+      snapshot: { options: [], tables: [], cron: [], userMeta: [] },
+      logNoise: [], bodyNoise: [], activeAtStart: false,
+    };
     const denial = {
       name: 'deny', actor: 'editor', surface: 'admin',
       screens: [{ url: SCREEN, allow: [], deny: ['editor'] }],
@@ -749,6 +757,110 @@ describe('interpret', () => {
       expect(errors[1]).toMatch(/^journey "mod": /);
       // No authored step ran: only the gate's own two navigations happened.
       expect(page.gotos).toEqual([MINT, SCREEN]);
+    });
+
+    it('FAILS every authored journey, modules included, when the gate is denied with a 403', async () => {
+      const { page, runs } = gated({ screen: 'acme' });
+      page.navigations = [ADMIN_LANDING, (url) => response(403, `https://s.test${url}`)];
+
+      const errors = await Promise.all(runs.map((run) => run().then(() => null, (error: Error) => error.message)));
+
+      expect(errors[0]).toMatch(/^journey "deny": gate "acme" failed: .*HTTP 403/);
+      expect(errors[1]).toMatch(/^journey "mod": gate "acme" failed: .*HTTP 403/);
+      expect(page.gotos).toEqual([MINT, SCREEN]);
+    });
+
+    it('FAILS every authored journey when the gate\'s administrator could not log in', async () => {
+      const { page, runs } = gated({ screen: 'acme' });
+      page.navigations = [LOGIN_BOUNCE];
+
+      const errors = await Promise.all(runs.map((run) => run().then(() => null, (error: Error) => error.message)));
+
+      for (const message of errors) expect(message).toMatch(/gate "acme" failed: .*could not authenticate as administrator/);
+    });
+
+    /** A gated manifest run the way the CLI runs it: through runSuite, with a baseline. */
+    async function viaSuite(logLines: (call: number) => string[], logNoise: string[] = [], gateAnswer = landsOn(`https://s.test${SCREEN}`)) {
+      const page = new FakePage();
+      const browser = new FakeBrowser(page);
+      let reads = 0;
+      const { agent } = fakeAgent({
+        logDelta: async (offset: number | 'end') => (offset === 'end'
+          ? { offset: 100, lines: [], available: true }
+          : { offset: 100, lines: logLines(reads++), available: true }),
+      });
+      const manifest = parseManifest({ ...withJourney(denial), journeys: [denial, echo], gate: { screen: 'acme' } }, 'f.json');
+      page.navigations = [ADMIN_LANDING, gateAnswer, ADMIN_LANDING, CONTROL, (url) => response(403, `https://s.test${url}`)];
+      const baseline: Baseline = {
+        surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
+        snapshot: { options: [], tables: [], cron: [], userMeta: [] },
+        logNoise, bodyNoise: [], activeAtStart: false,
+      };
+      return runSuite(register(...interpret(manifest, repo)), browser.asBrowser(), CFG, agent, baseline);
+    }
+
+    const NOISE_LINE = '[15-Sep-2026 22:40:00 UTC] PHP Deprecated:  Creation of dynamic property Theme::$x is deprecated in /t.php on line 1';
+    const NOISE_TEXT = 'PHP Deprecated: Creation of dynamic property Theme::$x is deprecated in /t.php on line 1';
+    const REAL_LINE = '[15-Sep-2026 22:40:00 UTC] PHP Warning:  Undefined array key "x" in /acme.php on line 9';
+
+    it('lets the journeys run when the gate visit saw only this site\'s baseline noise, and reports nothing', async () => {
+      // A theme's per-request deprecation lands in EVERY window, the gate's included. Failing the
+      // gate on it failed every authored journey on any site with a noisy theme.
+      const results = await viaSuite(() => [NOISE_LINE], [NOISE_TEXT]);
+
+      expect(results.map((r) => r.findings)).toEqual([[], [{ kind: 'assertion', text: 'echo module ran' }]]);
+    });
+
+    it('reports a non-noise finding from the gate visit exactly once, on the first authored journey', async () => {
+      const results = await viaSuite((call) => (call === 0 ? [REAL_LINE] : []));
+
+      expect(results[0]!.findings).toEqual([
+        { kind: 'phplog', text: 'PHP Warning: Undefined array key "x" in /acme.php on line 9' },
+      ]);
+      expect(JSON.stringify(results[1]!.findings)).not.toContain('Undefined array key');
+    });
+
+    it('reports a LOST log from the gate visit instead of dropping it, and still runs the journeys', async () => {
+      const page = new FakePage();
+      const browser = new FakeBrowser(page);
+      let reads = 0;
+      const { agent } = fakeAgent({
+        logDelta: async (offset: number | 'end') => (offset === 'end'
+          ? { offset: 100, lines: [], available: true }
+          : reads++ === 0
+            ? { offset: 100, lines: [], available: false, reason: 'debug.log is not readable' }
+            : { offset: 100, lines: [], available: true }),
+      });
+      const manifest = parseManifest({ ...withJourney(denial), journeys: [echo, denial], gate: { screen: 'acme' } }, 'f.json');
+      page.navigations = [ADMIN_LANDING, landsOn(`https://s.test${SCREEN}`), ADMIN_LANDING, CONTROL, (url) => response(403, `https://s.test${url}`)];
+      const results = await runSuite(register(...interpret(manifest, repo)), browser.asBrowser(), CFG, agent, NO_NOISE);
+
+      // The FIRST authored journey here is the module, and the lost signal rides on it.
+      expect(results[0]!.findings).toEqual([
+        expect.objectContaining({ kind: 'phplog', text: expect.stringContaining('debug.log signal unavailable (debug.log is not readable)') }),
+        { kind: 'assertion', text: 'echo module ran' },
+      ]);
+      expect(results[1]!.findings).toEqual([]);
+    });
+
+    it('keeps the gate\'s leftover finding even when the first authored journey throws', async () => {
+      const page = new FakePage();
+      const browser = new FakeBrowser(page);
+      let reads = 0;
+      const { agent } = fakeAgent({
+        logDelta: async (offset: number | 'end') => (offset === 'end'
+          ? { offset: 100, lines: [], available: true }
+          : { offset: 100, lines: reads++ === 0 ? [REAL_LINE] : [], available: true }),
+      });
+      const throwing = { name: 'boom', actor: 'editor', surface: 'admin', module: 'tests/fixtures/journeys/throws.ts' };
+      const manifest = parseManifest({ ...withJourney(denial), journeys: [throwing], gate: { screen: 'acme' } }, 'f.json');
+      page.navigations = [ADMIN_LANDING, landsOn(`https://s.test${SCREEN}`)];
+      const [result] = await runSuite(register(...interpret(manifest, repo)), browser.asBrowser(), CFG, agent, NO_NOISE);
+
+      expect(result!.findings).toEqual([
+        { kind: 'phplog', text: 'PHP Warning: Undefined array key "x" in /acme.php on line 9' },
+        expect.objectContaining({ kind: 'assertion', text: expect.stringContaining('journey "boom": module') }),
+      ]);
     });
 
     it('refuses a gate screen that would leave the site, before anything is visited (R86)', () => {

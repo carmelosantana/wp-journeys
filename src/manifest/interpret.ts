@@ -37,9 +37,10 @@ import type { AgentClient } from '../agent/client.ts';
 import { shortcodeRenderDefect, shortcodeRenderUrl, signRenderDoor } from '../agent/render.ts';
 import type { Config } from '../config.ts';
 import { messageOf } from '../errors.ts';
-import type { Journey, JourneyResult } from '../journeys/index.ts';
+import { JourneyError, type Journey, type JourneyResult } from '../journeys/index.ts';
 import { isSitePath } from '../site-path.ts';
 import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
+import type { Finding } from '../sentinel/phplog.ts';
 import type { Manifest, ManifestJourney } from './schema.ts';
 
 /**
@@ -169,14 +170,18 @@ function readsBack(text: string, written: string): boolean {
   return comparable(text).includes(comparable(written));
 }
 
-/** Resolves when the gate held; rejects with why it did not. Shared by every journey of a manifest. */
-type Gate = (browser: Browser, cfg: Config, agent: AgentClient) => Promise<void>;
+/**
+ * Resolves when the gate held, with the findings its visit made that are NOT about reachability,
+ * for the first journey to claim; rejects with why the gate did not hold. Shared by every
+ * journey of a manifest.
+ */
+type Gate = (browser: Browser, cfg: Config, agent: AgentClient) => Promise<Finding[]>;
 
 /**
  * A gate's screen: a URL when it starts with `/`, else a plugin page slug served by `admin.php`.
  * A slash-led screen that would leave the target site (`//host/…`) is refused (R86).
  */
-export function gateUrl(screen: string): string {
+function gateUrl(screen: string): string {
   if (!screen.startsWith('/')) return `/wp-admin/admin.php?page=${encodeURIComponent(screen)}`;
   if (!isSitePath(screen)) {
     throw new Error(`gate screen ${JSON.stringify(screen)} is not a path on the target site — start it with exactly one "/"`);
@@ -188,29 +193,43 @@ export function gateUrl(screen: string): string {
  * The manifest's gate (R76), checked ONCE for all its journeys and remembered.
  *
  * "The plugin is live" is asserted, not assumed: the administrator must be SERVED the gate
- * screen — 2xx, not denied, and clean. Otherwise every authored journey fails naming the gate,
- * because none of what it would go on to assert means anything about a plugin that is not
- * there. Never a skip: a gate that does not hold is a failure. No gate, no precondition.
+ * screen — 2xx, not denied, not bounced to login. Otherwise every authored journey fails naming
+ * the gate, because none of what it would go on to assert means anything about a plugin that is
+ * not there. Never a skip: a gate that does not hold is a failure. No gate, no precondition.
+ *
+ * The gate fails ONLY on reachability: the visit's own verdict, or an `assertion` (a login that
+ * failed, a sentinel that could not be installed or drained). Anything else its visit observed —
+ * a theme's per-request deprecation, a lost debug.log — is not a reason to fail every journey
+ * unheard: those findings are handed, exactly once, to the FIRST authored journey's result, where
+ * `runSuite` subtracts this site's baseline noise and reports the rest. A lost-log finding is
+ * reported that way too, never dropped.
  */
 function gateFor(screen: string | undefined): Gate {
-  if (screen === undefined) return async () => {};
+  if (screen === undefined) return async () => [];
   const url = gateUrl(screen);
-  let held: Promise<void> | undefined;
-  return (browser, cfg, agent) => {
+  let held: Promise<Finding[]> | undefined;
+  let claimed = false;
+  return async (browser, cfg, agent) => {
     held ??= (async () => {
+      let verdict: Finding[] = [];
       const result = await runAsActor(browser, cfg, agent, `gate:${screen}`, Actor.ADMINISTRATOR, 'admin', async (page, sentinel) => {
         sentinel.expect({ denyExpected: false });
-        await sentinel.visit(page, url);
+        verdict = await sentinel.visit(page, url);
         return 0;
       });
-      if (result.findings.length > 0) {
+      const assertions = result.findings.filter((finding) => finding.kind === 'assertion');
+      if (verdict.length > 0 || assertions.length > 0) {
         throw new Error(
-          `gate "${screen}" failed: the administrator was not served ${url} cleanly — `
-            + result.findings.map((finding) => finding.text).join('; '),
+          `gate "${screen}" failed: the administrator was not served ${url} — `
+            + [...verdict, ...assertions].map((finding) => finding.text).join('; '),
         );
       }
+      return result.findings;
     })();
-    return held;
+    const leftovers = await held;
+    if (claimed) return [];
+    claimed = true;
+    return leftovers;
   };
 }
 
@@ -220,93 +239,105 @@ function journeyFor(entry: ManifestJourney, manifestDir: string, nonce: () => st
     actor: entry.actor,
     surface: entry.surface,
     run: async (browser, cfg, agent) => {
+      let carried: Finding[];
       try {
-        await gate(browser, cfg, agent);
+        carried = await gate(browser, cfg, agent);
       } catch (error) {
         throw new Error(`journey "${entry.name}": ${messageOf(error)}`, { cause: error });
       }
-      if (entry.module !== undefined) {
-        const loaded = await loadModule(entry, entry.module, manifestDir);
-        let raw: unknown;
-        try {
-          raw = await loaded.run(browser, cfg, agent);
-        } catch (error) {
-          // Third-party code. Unwrapped, the operator gets a stack from a file they have to go
-          // and find, with neither the journey nor the module named; the original stays as the
-          // cause so nothing is lost.
-          throw new Error(
-            `journey "${entry.name}": module "${entry.module}" threw — ${messageOf(error)}`, { cause: error },
-          );
-        }
-        return asManifestResult(entry, entry.module, raw);
+      try {
+        const result = await authored(browser, cfg, agent);
+        return carried.length === 0 ? result : { ...result, findings: [...carried, ...result.findings] };
+      } catch (error) {
+        // The gate's findings were claimed by this journey; a throw must not take them with it.
+        if (carried.length === 0) throw error;
+        throw new JourneyError(messageOf(error), carried, { cause: error });
       }
-      return runAsActor(browser, cfg, agent, entry.name, entry.actor, entry.surface, async (page, sentinel) => {
-        // The control visit (R67): one screen this actor MUST be served, before any step. A
-        // deny-only journey would otherwise be satisfied by the login bounce even when the mint
-        // redirected away without a session — and the shipped example is deny-only.
-        if (!isAnonymous(entry.actor)) {
-          sentinel.expect({ denyExpected: false });
-          await sentinel.visit(page, CONTROL_SCREEN);
-        }
-
-        for (const screen of entry.screens ?? []) {
-          // The schema guarantees the actor is in exactly one of the two lists.
-          sentinel.expect({ denyExpected: screen.deny.includes(entry.actor) });
-          await sentinel.visit(page, screen.url);
-        }
-
-        for (const setting of entry.settings ?? []) {
-          // A fresh suffix per write (R66), so the read-back proves THIS run's write and not a
-          // value the site has held since the first successful run — after which a submit that
-          // silently stopped working would stay green forever.
-          const written = `${setting.value} ${nonce()}`;
-
-          // Absent BEFORE the write. Change detection, not a state check; and the place a
-          // matcher that finds everything would show itself first.
-          // Signed at each visit, so a render-door readBack never carries an expired signature
-          // (the write between the two visits can take a while). Printed below UNSIGNED.
-          await sentinel.visit(page, signRenderDoor(setting.readBack, cfg.secret));
-          if (readsBack(await visibleText(page, entry, setting.readBack), written)) {
-            throw new Error(
-              `read-back for "${entry.name}": ${JSON.stringify(written)} was already visible at ${setting.readBack} `
-                + 'before it was written — its appearance afterwards could prove nothing, so the write was not made',
-            );
-          }
-
-          await sentinel.visit(page, setting.url);
-          await page.fill(setting.field, written);
-          // The submit is NEVER retried — a retried submit writes twice.
-          if (setting.submit !== undefined) await page.click(setting.submit);
-          else await page.keyboard.press('Enter');
-          await page.waitForLoadState('networkidle');
-
-          // Present AFTER. This is the assertion the whole entry exists for.
-          await sentinel.visit(page, signRenderDoor(setting.readBack, cfg.secret));
-          if (!readsBack(await visibleText(page, entry, setting.readBack), written)) {
-            throw new Error(
-              `read-back failed for "${entry.name}": wrote ${JSON.stringify(written)} to ${setting.field} `
-                + `on ${setting.url}, but it never appeared at ${setting.readBack}. Either the save was refused — a `
-                + 'validation or capability failure answers with a redirect back to the form, not an error — or the '
-                + (setting.submit !== undefined
-                  ? `submit never happened (clicking ${setting.submit} did not post the form), `
-                  : 'submit never happened (Enter submits an <input> inside a <form>, not a <textarea> or a field '
-                    + 'without one; name the form\'s submit control in "submit"), ')
-                + `or ${setting.readBack} is not a page that shows this setting.`,
-            );
-          }
-        }
-
-        for (const tag of entry.shortcodes ?? []) {
-          await sentinel.visit(page, shortcodeRenderUrl(tag, cfg.secret));
-          const defect = shortcodeRenderDefect(await page.content(), tag);
-          if (defect) throw new Error(defect);
-        }
-
-        // A settings save creates no entity; a manifest journey is read-only by construction.
-        return 0;
-      });
     },
   };
+
+  async function authored(browser: Browser, cfg: Config, agent: AgentClient): Promise<JourneyResult> {
+    if (entry.module !== undefined) {
+      const loaded = await loadModule(entry, entry.module, manifestDir);
+      let raw: unknown;
+      try {
+        raw = await loaded.run(browser, cfg, agent);
+      } catch (error) {
+        // Third-party code. Unwrapped, the operator gets a stack from a file they have to go
+        // and find, with neither the journey nor the module named; the original stays as the
+        // cause so nothing is lost.
+        throw new Error(
+          `journey "${entry.name}": module "${entry.module}" threw — ${messageOf(error)}`, { cause: error },
+        );
+      }
+      return asManifestResult(entry, entry.module, raw);
+    }
+    return runAsActor(browser, cfg, agent, entry.name, entry.actor, entry.surface, async (page, sentinel) => {
+      // The control visit (R67): one screen this actor MUST be served, before any step. A
+      // deny-only journey would otherwise be satisfied by the login bounce even when the mint
+      // redirected away without a session — and the shipped example is deny-only.
+      if (!isAnonymous(entry.actor)) {
+        sentinel.expect({ denyExpected: false });
+        await sentinel.visit(page, CONTROL_SCREEN);
+      }
+
+      for (const screen of entry.screens ?? []) {
+        // The schema guarantees the actor is in exactly one of the two lists.
+        sentinel.expect({ denyExpected: screen.deny.includes(entry.actor) });
+        await sentinel.visit(page, screen.url);
+      }
+
+      for (const setting of entry.settings ?? []) {
+        // A fresh suffix per write (R66), so the read-back proves THIS run's write and not a
+        // value the site has held since the first successful run — after which a submit that
+        // silently stopped working would stay green forever.
+        const written = `${setting.value} ${nonce()}`;
+
+        // Absent BEFORE the write. Change detection, not a state check; and the place a
+        // matcher that finds everything would show itself first.
+        // Signed at each visit, so a render-door readBack never carries an expired signature
+        // (the write between the two visits can take a while). Printed below UNSIGNED.
+        await sentinel.visit(page, signRenderDoor(setting.readBack, cfg.secret));
+        if (readsBack(await visibleText(page, entry, setting.readBack), written)) {
+          throw new Error(
+            `read-back for "${entry.name}": ${JSON.stringify(written)} was already visible at ${setting.readBack} `
+              + 'before it was written — its appearance afterwards could prove nothing, so the write was not made',
+          );
+        }
+
+        await sentinel.visit(page, setting.url);
+        await page.fill(setting.field, written);
+        // The submit is NEVER retried — a retried submit writes twice.
+        if (setting.submit !== undefined) await page.click(setting.submit);
+        else await page.keyboard.press('Enter');
+        await page.waitForLoadState('networkidle');
+
+        // Present AFTER. This is the assertion the whole entry exists for.
+        await sentinel.visit(page, signRenderDoor(setting.readBack, cfg.secret));
+        if (!readsBack(await visibleText(page, entry, setting.readBack), written)) {
+          throw new Error(
+            `read-back failed for "${entry.name}": wrote ${JSON.stringify(written)} to ${setting.field} `
+              + `on ${setting.url}, but it never appeared at ${setting.readBack}. Either the save was refused — a `
+              + 'validation or capability failure answers with a redirect back to the form, not an error — or the '
+              + (setting.submit !== undefined
+                ? `submit never happened (clicking ${setting.submit} did not post the form), `
+                : 'submit never happened (Enter submits an <input> inside a <form>, not a <textarea> or a field '
+                  + 'without one; name the form\'s submit control in "submit"), ')
+              + `or ${setting.readBack} is not a page that shows this setting.`,
+          );
+        }
+      }
+
+      for (const tag of entry.shortcodes ?? []) {
+        await sentinel.visit(page, shortcodeRenderUrl(tag, cfg.secret));
+        const defect = shortcodeRenderDefect(await page.content(), tag);
+        if (defect) throw new Error(defect);
+      }
+
+      // A settings save creates no entity; a manifest journey is read-only by construction.
+      return 0;
+    });
+  }
 }
 
 /**

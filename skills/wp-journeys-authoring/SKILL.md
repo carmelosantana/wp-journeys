@@ -20,7 +20,7 @@ Put `wp-journeys.json` in any directory of the plugin, for example `tests/e2e/`,
 | `version` | Always `1`. |
 | `plugin` | The slug. It must equal the run's `--plugin`, or the run is refused. |
 | `description`, `$schema` | Free text, and editor completion. The runner ignores both. |
-| `gate.screen` | Optional. A plugin page slug (served as `admin.php?page=<slug>`) or a `/path`. The administrator must be served it cleanly, or **every** authored journey fails. |
+| `gate.screen` | Optional. A plugin page slug (served as `admin.php?page=<slug>`) or a `/path`. The administrator must be served it (2xx, not denied, not bounced to login), or **every** authored journey fails. Anything else the gate visit sees, such as a PHP notice, is reported once on the first authored journey, after the site's baseline noise is subtracted. |
 | `deprecated.shortcodes` | Optional. Tags the plugin deprecates on purpose. Each one renders on its own row, and core's deprecation notice naming that tag is discounted there, with a note. A journey may not also list a declared tag. |
 | `journeys[]` | Non-empty. Names must be unique and must not collide with a core row. |
 

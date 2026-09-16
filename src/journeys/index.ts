@@ -1,4 +1,5 @@
 /** The journey registry and the single definition of a run's outcome. */
+import type { Finding } from '../sentinel/phplog.ts';
 import type { Journey, JourneyResult, Outcome } from './types.ts';
 
 export type { Journey, JourneyResult, Outcome, SurfaceAxis } from './types.ts';
@@ -40,4 +41,18 @@ export function register(...journeys: Journey[]): Record<string, Journey> {
     registry[journey.name] = journey;
   }
   return registry;
+}
+
+/**
+ * A journey that failed by throwing, but had already observed findings that must not be lost
+ * with it — the runner reports them on the failed row alongside the thrown message.
+ */
+export class JourneyError extends Error {
+  readonly findings: Finding[];
+
+  constructor(message: string, findings: Finding[], options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'JourneyError';
+    this.findings = findings;
+  }
 }

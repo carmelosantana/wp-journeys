@@ -25,7 +25,7 @@ import { projectSurface } from '../discovery/surface.ts';
 import type { Surface } from '../discovery/types.ts';
 import { messageOf } from '../errors.ts';
 import { outboundText } from '../outbound.ts';
-import { outcomeOf } from '../journeys/index.ts';
+import { JourneyError, outcomeOf } from '../journeys/index.ts';
 import { interpret } from '../manifest/interpret.ts';
 import { loadManifest } from '../manifest/load.ts';
 import type { Journey, JourneyResult } from '../journeys/index.ts';
@@ -307,6 +307,9 @@ export async function runSuite(
       outcomeOf(settled);
       results.push(settled);
     } catch (error) {
+      // A journey that threw may still carry what it observed before it did (a manifest gate's
+      // leftover findings): reported, after the same noise subtraction, never dropped.
+      const observed = error instanceof JourneyError ? withoutBaselineNoise(error.findings, baseline) : [];
       const failed: JourneyResult = {
         name: journey.name,
         actor: journey.actor,
@@ -314,7 +317,7 @@ export async function runSuite(
         entitiesCreated: raw?.entitiesCreated ?? 0,
         // Filtered here as well as on the way out: the result is also what MCP hands back, and a
         // journey's own message may quote a minted URL.
-        findings: [...carried, { kind: 'assertion', text: outboundText(messageOf(error), cfg?.secret) }],
+        findings: [...carried, ...observed, { kind: 'assertion', text: outboundText(messageOf(error), cfg?.secret) }],
       };
       if (raw?.notes) failed.notes = raw.notes;
       results.push(failed);
