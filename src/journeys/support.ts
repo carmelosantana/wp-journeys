@@ -141,7 +141,7 @@ async function drainOrSaySo(sentinel: Sentinel): Promise<Finding[]> {
     return await sentinel.drain();
   } catch (error) {
     return [assertionFinding(
-      `the sentinel could not be drained (${messageOf(error)}) — this journey's signals were NOT read`,
+      `the sentinel could not be drained (${messageOf(error)}) — these signals were NOT read`,
     )];
   }
 }

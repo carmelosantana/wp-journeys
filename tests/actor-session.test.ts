@@ -159,9 +159,12 @@ describe('openActorSession', () => {
     const opened = await openActorSession(browser.asBrowser(), CFG, agent, Actor.ANONYMOUS);
     if (!opened.ok) throw new Error('expected a session');
 
-    expect(await opened.session.drain()).toMatchObject([
-      { kind: 'assertion', text: expect.stringContaining('could not be drained') },
+    const drained = await opened.session.drain();
+    expect(drained).toMatchObject([
+      { kind: 'assertion', text: expect.stringMatching(/could not be drained.*these signals were NOT read/) },
     ]);
+    // Said the same way for a login_as session as for a journey (M8).
+    expect(JSON.stringify(drained)).not.toMatch(/journey/);
     await opened.session.close();
   });
 });
