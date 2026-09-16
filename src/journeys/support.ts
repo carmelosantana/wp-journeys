@@ -146,6 +146,77 @@ async function drainOrSaySo(sentinel: Sentinel): Promise<Finding[]> {
   }
 }
 
+/**
+ * One actor's live, watched, authenticated browser session (R84).
+ *
+ * `drain()` is cumulative for the session's lifetime (it is the sentinel's), and never throws: a
+ * drain that failed is itself a finding. `close()` closes the context and nothing else — it does
+ * not drain, so a caller that wants the findings asks for them first.
+ */
+export interface ActorSession {
+  actor: Actor;
+  page: Page;
+  sentinel: Sentinel;
+  drain(): Promise<Finding[]>;
+  close(): Promise<void>;
+}
+
+/**
+ * Either a session, or the findings that explain why there is none. There is no third shape:
+ * a page that is unwatched or unauthenticated is never handed back (R84).
+ */
+export type OpenedSession = { ok: true; session: ActorSession } | { ok: false; findings: Finding[] };
+
+/**
+ * Open an isolated context, arm the sentinel BEFORE the first navigation, and authenticate the
+ * actor (unless anonymous). The ONE place a session is established — `runAsActor` is built on it,
+ * and so is the MCP server's `login_as`, whose session outlives a single call.
+ *
+ * A session that could not be established is closed here, after its sentinel was drained, so
+ * the refusal carries what was observed on the way (the failed login's own verdict, first) and
+ * then why. Failures that are not about the session — the browser refusing a context — propagate.
+ */
+export async function openActorSession(
+  browser: Browser, cfg: Config, agent: AgentClient, actor: Actor,
+): Promise<OpenedSession> {
+  // One context per session: cookies, storage and the minted session belong to this actor only.
+  const context = await browser.newContext({ baseURL: cfg.baseUrl, ignoreHTTPSErrors: true });
+  const close = async (): Promise<void> => { await context.close(); };
+  let handedOver = false;
+  try {
+    const page = await context.newPage();
+
+    let sentinel: Sentinel;
+    try {
+      sentinel = await installSentinel(page, agent);
+    } catch (error) {
+      // With no sentinel there are no signals at all, so nothing is run: a page driven with
+      // nothing watching it would report clean no matter what it hit.
+      return {
+        ok: false,
+        findings: [assertionFinding(
+          `the sentinel could not be installed (${messageOf(error)}) — this journey was not run`,
+        )],
+      };
+    }
+    const drain = () => drainOrSaySo(sentinel);
+
+    if (!isAnonymous(actor)) {
+      try {
+        await authenticate(page, sentinel, agent, actor);
+      } catch (error) {
+        // Observed first, then why, which usually explains them.
+        return { ok: false, findings: [...await drain(), assertionFinding(messageOf(error))] };
+      }
+    }
+
+    handedOver = true;
+    return { ok: true, session: { actor, page, sentinel, drain, close } };
+  } finally {
+    if (!handedOver) await close();
+  }
+}
+
 export async function runAsActor(
   browser: Browser,
   cfg: Config,
@@ -155,31 +226,18 @@ export async function runAsActor(
   surface: SurfaceAxis,
   body: JourneyBody,
 ): Promise<JourneyResult> {
-  // One context per journey: cookies, storage and the minted session belong to this actor only.
-  const context = await browser.newContext({ baseURL: cfg.baseUrl, ignoreHTTPSErrors: true });
+  const opened = await openActorSession(browser, cfg, agent, actor);
+  if (!opened.ok) {
+    // The body never runs on a session that was not established.
+    return { name, actor, surface, entitiesCreated: 0, findings: opened.findings };
+  }
+  const { session } = opened;
   try {
-    const page = await context.newPage();
-
-    let sentinel: Sentinel;
-    try {
-      sentinel = await installSentinel(page, agent);
-    } catch (error) {
-      // With no sentinel there are no signals at all, so the journey is not run: a body driven
-      // with nothing watching it would report a clean pass no matter what it hit.
-      return {
-        name, actor, surface, entitiesCreated: 0,
-        findings: [assertionFinding(
-          `the sentinel could not be installed (${messageOf(error)}) — this journey was not run`,
-        )],
-      };
-    }
-
     const thrown: Finding[] = [];
     const notes: string[] = [];
     let entitiesCreated = 0;
     try {
-      if (!isAnonymous(actor)) await authenticate(page, sentinel, agent, actor);
-      entitiesCreated = await body(page, sentinel, (text) => { notes.push(text); });
+      entitiesCreated = await body(session.page, session.sentinel, (text) => { notes.push(text); });
     } catch (error) {
       // R3: a throw is this journey's failure, not the run's. Recorded, then the sentinel is
       // still drained and the context is still closed.
@@ -189,11 +247,11 @@ export async function runAsActor(
     const result: JourneyResult = {
       name, actor, surface, entitiesCreated,
       // Observed first, then the journey's own verdict, which usually explains them.
-      findings: [...await drainOrSaySo(sentinel), ...thrown],
+      findings: [...await session.drain(), ...thrown],
     };
     if (notes.length > 0) result.notes = notes;
     return result;
   } finally {
-    await context.close();
+    await session.close();
   }
 }
