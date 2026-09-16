@@ -62,23 +62,40 @@ function urlFor(slug: string, parent: string | null, pluginPages: ReadonlySet<st
  * parent's. Core promotes nothing in that case, and neither does this — which is what keeps an
  * ordinary plugin menu, and a custom post type's screens, at their own URLs.
  *
- * Only the URL moves. The screen keeps its own slug, capability and title, because that
- * capability is what the permission matrix judges the actor against.
- *
  * Verified live on WP 7.1: the fixture's container is linked at
  * `admin.php?page=wpj-fixture-container-home` (200), while `/wp-admin/wpj-fixture-container`
  * answers 404 — and the raw `$menu` the agent dumps still carries the unpromoted slug, so the
  * projection has to do this itself.
+ *
+ * The CAPABILITY moves with the URL (R56). The promoted screen and its first submenu then sit
+ * at one URL holding one capability, so the permission matrix cannot emit two contradictory
+ * expectations for it — one of which would always be a false defect against the plugin.
+ *
+ * A top-level that serves its OWN page is never promoted, however (R56). Registering a callback
+ * puts a slug in `$_parent_pages`, so `admin.php?page=<slug>` is a real screen; a plugin that
+ * merely drops its mirror row with `remove_submenu_page()` would otherwise stop being swept
+ * there at all, and a fatal on that screen would be invisible — a lost signal reading as ok.
+ *
+ * This is only faithful because discovery builds the menu as the first ADMINISTRATOR
+ * (mu-plugin/src/discovery.php): `add_submenu_page()` adds the mirror row only for a user who
+ * can see the parent, so discovery running as user 0 would strip every mirror and make every
+ * top-level menu look like a container.
  */
-function topLevelUrl(
-  slug: string, rows: readonly unknown[][], pluginPages: ReadonlySet<string>,
-): string {
-  const own = urlFor(slug, null, pluginPages);
+function topLevelDestination(
+  parent: { slug: string; capability: string },
+  rows: readonly unknown[][],
+  pluginPages: ReadonlySet<string>,
+): { url: string; capability: string } {
+  const own = { url: urlFor(parent.slug, null, pluginPages), capability: parent.capability };
+  // It serves its own page, so it is a screen in its own right and must keep being driven.
+  if (pluginPages.has(parent.slug)) return own;
+
   for (const row of rows) {
     const first = readRow(row);
     // A separator is not a destination; keep looking for the row core would land on.
     if (!first) continue;
-    return first.slug === slug ? own : urlFor(first.slug, slug, pluginPages);
+    if (first.slug === parent.slug) return own;
+    return { url: urlFor(first.slug, parent.slug, pluginPages), capability: first.capability };
   }
   return own;
 }
@@ -91,7 +108,7 @@ export function projectSurface(raw: RawRegistries): Surface {
     const parsed = readRow(row);
     if (!parsed) continue;
     const children = raw.submenu[parsed.slug] ?? [];
-    screens.push({ ...parsed, url: topLevelUrl(parsed.slug, children, pluginPages), parent: null });
+    screens.push({ ...parsed, ...topLevelDestination(parsed, children, pluginPages), parent: null });
     for (const child of children) {
       const sub = readRow(child);
       // add_submenu_page() mirrors the parent into its own submenu as a link back to itself:

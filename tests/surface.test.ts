@@ -206,11 +206,44 @@ describe('projectSurface', () => {
       expect(projectSurface(container).screens[0]?.url).toBe('/wp-admin/admin.php?page=acme-home');
     });
 
-    it('keeps the container’s own slug, capability and title — only the URL moves', () => {
+    it('keeps the container’s own slug and title — the URL is what moves', () => {
       expect(projectSurface(container).screens[0]).toEqual({
         slug: 'acme-container', url: '/wp-admin/admin.php?page=acme-home',
         capability: 'manage_options', title: 'Acme', parent: null,
       });
+    });
+
+    it('moves the first submenu’s CAPABILITY with the URL, since that is what guards it (R56)', () => {
+      // The container and its first submenu end up at the same URL. Carrying different
+      // capabilities there would make the matrix emit two contradictory expectations for one
+      // URL, and one of them would be a guaranteed false defect against the plugin under test.
+      const differing: RawRegistries = {
+        ...container,
+        submenu: { 'acme-container': [['Home', 'read', 'acme-home']] },
+      };
+
+      const screens = projectSurface(differing).screens;
+      expect(screens[0]?.capability).toBe('read');
+      expect(screens[0]?.url).toBe(screens[1]?.url);
+      expect(screens[0]?.capability).toBe(screens[1]?.capability);
+    });
+
+    it('does NOT promote a top-level that serves its own page, so it keeps being swept (R56)', () => {
+      // A menu registered WITH a callback is in $_parent_pages, so admin.php?page=<slug> is a
+      // real screen. Dropping its mirror with remove_submenu_page() must not stop the sweep
+      // driving it: promoting it would leave that screen untouched, and a fatal there invisible
+      // — a lost signal reading as ok.
+      const served: RawRegistries = {
+        ...container,
+        menu: [['Acme', 'manage_options', 'acme-served']],
+        submenu: { 'acme-served': [['Child', 'manage_options', 'acme-child']] },
+        pluginPages: ['acme-served', 'acme-child'],
+      };
+
+      expect(projectSurface(served).screens.map((s) => s.url)).toEqual([
+        '/wp-admin/admin.php?page=acme-served',
+        '/wp-admin/admin.php?page=acme-child',
+      ]);
     });
 
     it('leaves a top-level item with no submenus at its own URL', () => {
