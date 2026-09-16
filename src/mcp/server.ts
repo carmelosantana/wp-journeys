@@ -14,6 +14,7 @@
  * newline-delimited stdio, MCP 2025-06-18, tools only), re-implemented here because this is a
  * separate package with no runtime dependencies.
  */
+import { Console } from 'node:console';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 
@@ -347,6 +348,34 @@ export function createMcpServer(deps: McpDeps) {
 }
 
 /**
+ * While serving on the real stdout, nothing but frames may reach it (I1, R90) — and code the
+ * server does not own runs inside it: an escape-hatch journey module, and whatever that pulls in.
+ *
+ * So frames are written through a private reference to stdout's own `write`, and every other
+ * route to stdout is pointed at stderr: the global `console` is replaced, and `process.stdout.write`
+ * itself is swapped, which also catches a `console.log` captured before serving began (the global
+ * console writes through that same stream method). Restored when serving ends.
+ *
+ * The limit: a write straight to file descriptor 1 (`fs.writeSync(1, …)`, a child process that
+ * inherits stdout) bypasses both, and nothing short of owning the descriptor can stop it.
+ */
+function divertStdout(): { writeFrame: (text: string) => void; restore: () => void } {
+  const { stdout, stderr } = process;
+  const originalWrite = stdout.write;
+  const originalConsole = globalThis.console;
+  const writeFrame = (text: string): void => { originalWrite.call(stdout, text); };
+  stdout.write = stderr.write.bind(stderr) as typeof stdout.write;
+  globalThis.console = new Console(stderr, stderr);
+  return {
+    writeFrame,
+    restore: () => {
+      stdout.write = originalWrite;
+      globalThis.console = originalConsole;
+    },
+  };
+}
+
+/**
  * Serve until `input` ends. One JSON message per line in, one per line out, handled one at a
  * time in arrival order. `output` receives nothing but replies (R90).
  */
@@ -355,7 +384,9 @@ export async function serve(
   deps: McpDeps = defaultDeps(),
 ): Promise<void> {
   const server = createMcpServer(deps);
-  const send = (msg: Rpc) => { streams.output.write(`${JSON.stringify(msg)}\n`); };
+  const diverted = streams.output === process.stdout ? divertStdout() : null;
+  const write = diverted?.writeFrame ?? ((text: string) => { streams.output.write(text); });
+  const send = (msg: Rpc) => { write(`${JSON.stringify(msg)}\n`); };
   const lines = createInterface({ input: streams.input, crlfDelay: Infinity });
   try {
     for await (const line of lines) {
@@ -380,6 +411,8 @@ export async function serve(
     } catch (error) {
       // Diagnostics go to stderr, never to the protocol stream (R90).
       process.stderr.write(`wpj mcp: shutdown failed: ${redactLoginToken(messageOf(error))}\n`);
+    } finally {
+      diverted?.restore();
     }
   }
 }

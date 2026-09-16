@@ -3,7 +3,9 @@
  * behaviour (R84–R92), driven in-process against the same browser and agent fakes the journey
  * tests use. The sentinel is REAL, as it is everywhere else.
  */
+import { spawnSync } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 
 import type { Browser } from '@playwright/test';
 import { describe, expect, it } from 'vitest';
@@ -161,6 +163,26 @@ describe('the protocol (R91)', () => {
       expect(JSON.parse(line)).toHaveProperty('jsonrpc', '2.0');
     }
     expect(raw.endsWith('\n')).toBe(true);
+  });
+});
+
+describe('stdout belongs to the protocol, whatever a tool\'s code prints (I1, R90)', () => {
+  it('diverts console and direct stdout writes to stderr while serving on process.stdout', () => {
+    const fixture = fileURLToPath(new URL('./fixtures/mcp-noisy-server.ts', import.meta.url));
+    const result = spawnSync(process.execPath, [fixture], {
+      encoding: 'utf8',
+      input: `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'status' } })}\n`,
+    });
+
+    expect(result.status).toBe(0);
+    const lines = result.stdout.split('\n').filter(Boolean);
+    // The one frame, then the fixture's own line once serving has ended and stdout is restored.
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ jsonrpc: '2.0', id: 1, result: { isError: false } });
+    expect(lines[1]).toBe('after serve: stdout is restored');
+    for (const noise of ['console.log', 'console.info', 'console.debug', 'captured console.log', 'process.stdout.write']) {
+      expect(result.stderr, noise).toContain(`noise: ${noise}`);
+    }
   });
 });
 
