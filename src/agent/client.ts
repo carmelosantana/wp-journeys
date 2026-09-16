@@ -61,12 +61,36 @@ export class AgentRefusedError extends Error {}
 /** Whatever answered was not the agent: the reply was not JSON (wrong URL, agent not mounted). */
 export class AgentBadResponseError extends Error {}
 
+/** The agent did not answer in time, or the request was aborted. Never read as an empty answer. */
+export class AgentTimeoutError extends Error {}
+
+/** How long one agent request may take before it is a named failure rather than a hang. */
+export const AGENT_TIMEOUT_MS = 30_000;
+
+/** Whether a fetch rejection is an abort — the timeout signal's, or any other. */
+export function isAbort(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+}
+
+/**
+ * The origin a 3xx pointed at, resolved against the URL that answered. Only the origin: the
+ * path and query of wherever the site bounced to are not the operator's business here.
+ */
+export function redirectOrigin(location: string | null, from: string): string {
+  if (location === null || location === '') return '<no Location header>';
+  try {
+    return new URL(location, from).origin;
+  } catch {
+    return '<an unparseable Location header>';
+  }
+}
+
 const ROUTE = '/wp-journeys/v1/agent';
 
 /**
  * A site's base URL normalised to end in exactly one `/`, so relative paths resolve inside it.
  * The base path is kept, so a WordPress in a subdirectory works; POSTing to `/sub` can earn a
- * 301 to `/sub/`, which fetch follows as a GET.
+ * 301 to `/sub/`, which the client refuses rather than follows.
  */
 function siteBase(baseUrl: string): URL {
   const url = new URL(baseUrl);
@@ -104,13 +128,39 @@ export function createAgentClient(
   const endpoint = agentUrl(baseUrl);
   const discoverEndpoint = discoverUrl(baseUrl);
 
-  /** One request path for both doors: the same secret header and the same named errors. */
+  /**
+   * One request path for both doors: the same secret header and the same named errors.
+   *
+   * Redirects are NEVER followed. A followed redirect re-sends the secret header to wherever the
+   * site pointed — another origin included — and a POST followed as a GET answers something
+   * that is not the agent. A 3xx here means the base URL is not the site's canonical address.
+   * Every request is bounded too: an agent that never answers is a named failure, not a hang.
+   */
   async function post<T>(url: string, body: unknown, label: string): Promise<T> {
-    const response = await fetchImpl(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-WPJ-Secret': secret },
-      body: JSON.stringify(body),
-    });
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-WPJ-Secret': secret },
+        body: JSON.stringify(body),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(AGENT_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (isAbort(error)) {
+        throw new AgentTimeoutError(
+          `wp-journeys agent at ${new URL(url).origin} did not answer "${label}" within ${AGENT_TIMEOUT_MS / 1000} s — is the site up?`,
+        );
+      }
+      throw error;
+    }
+    if (response.status >= 300 && response.status < 400) {
+      throw new AgentBadResponseError(
+        `wp-journeys agent at ${url} redirected (HTTP ${response.status}) to ${redirectOrigin(response.headers.get('location'), url)} `
+          + '— the request was not followed, so the secret was not sent there. WPJ_BASE_URL is probably wrong: '
+          + 'set it to the site\'s canonical address (scheme, host and path exactly as WordPress reports them).',
+      );
+    }
     const text = await response.text();
     let payload: Record<string, unknown>;
     try {

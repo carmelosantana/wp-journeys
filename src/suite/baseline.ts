@@ -16,7 +16,9 @@
  *    reach because nothing need be written to the log at all.
  */
 import { ALL_ACTORS, isAnonymous } from '../actors/roles.ts';
-import type { AgentClient } from '../agent/client.ts';
+import {
+  AGENT_TIMEOUT_MS, AgentBadResponseError, AgentTimeoutError, isAbort, redirectOrigin, type AgentClient,
+} from '../agent/client.ts';
 import type { Config } from '../config.ts';
 import type { Snapshot } from '../discovery/snapshot.ts';
 import { projectSurface } from '../discovery/surface.ts';
@@ -197,7 +199,29 @@ export async function captureBaseline(
     {
       url: cfg.baseUrl,
       run: async () => {
-        const response = await fetchImpl(cfg.baseUrl);
+        // Never followed, and bounded, like every agent request: a redirected home page is not
+        // the render this probe exists to measure, and a hang is not a measurement.
+        let response: Response;
+        try {
+          response = await fetchImpl(cfg.baseUrl, {
+            redirect: 'manual',
+            signal: AbortSignal.timeout(AGENT_TIMEOUT_MS),
+          });
+        } catch (error) {
+          if (isAbort(error)) {
+            throw new AgentTimeoutError(
+              `the front-end probe of ${cfg.baseUrl} did not answer within ${AGENT_TIMEOUT_MS / 1000} s — is the site up?`,
+            );
+          }
+          throw error;
+        }
+        if (response.status >= 300 && response.status < 400) {
+          throw new AgentBadResponseError(
+            `the front-end probe of ${cfg.baseUrl} redirected (HTTP ${response.status}) to `
+              + `${redirectOrigin(response.headers.get('location'), cfg.baseUrl)}, so it measured no render. `
+              + 'WPJ_BASE_URL is probably wrong: set it to the site\'s canonical home address.',
+          );
+        }
         // Drained for two reasons now: the render and every diagnostic it writes must be
         // complete before the log window is read, AND the body itself is evidence (R60). It used
         // to be read and thrown away, which is why body noise cost nothing to start measuring.

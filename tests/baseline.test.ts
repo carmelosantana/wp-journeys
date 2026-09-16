@@ -107,6 +107,43 @@ function harness(options: { windows?: string[][]; bodies?: string[]; agent?: Par
   };
 }
 
+describe('captureBaseline, front-end probe transport', () => {
+  it('never follows a redirect and bounds the request with a timeout', async () => {
+    const { agent, deactivate, activate } = harness();
+    const inits: Array<RequestInit | undefined> = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      inits.push(init);
+      return new Response(CLEAN_BODY);
+    }) as unknown as typeof fetch;
+
+    await captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl);
+
+    expect(inits).toHaveLength(2);
+    for (const init of inits) {
+      expect(init?.redirect).toBe('manual');
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it('fails loudly on a redirected probe, rather than measuring a body that is not the render', async () => {
+    const { agent, sequence, deactivate, activate } = harness();
+    const fetchImpl = (async () => new Response(null, { status: 301, headers: { location: 'https://other.example/x' } })) as unknown as typeof fetch;
+
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
+      .rejects.toThrow(/front-end probe of https:\/\/s\.test\/ redirected \(HTTP 301\) to https:\/\/other\.example.*WPJ_BASE_URL is probably wrong/);
+    // Still reactivated.
+    expect(sequence.at(-1)).toBe('activate');
+  });
+
+  it('names a probe that timed out', async () => {
+    const { agent, deactivate, activate } = harness();
+    const fetchImpl = (async () => { throw new DOMException('timed out', 'TimeoutError'); }) as unknown as typeof fetch;
+
+    await expect(captureBaseline(agent, CFG, 'acme', deactivate, activate, fetchImpl))
+      .rejects.toThrow(/front-end probe of https:\/\/s\.test\/ did not answer within 30 s/);
+  });
+});
+
 describe('captureBaseline', () => {
   it('reads the site with the plugin under test deactivated, and turns it back on after', async () => {
     const { agent, sequence, fetchImpl, deactivate, activate } = harness();

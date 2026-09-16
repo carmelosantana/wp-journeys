@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { AgentBadResponseError, AgentRefusedError, createAgentClient } from '../src/agent/client.ts';
+import {
+  AGENT_TIMEOUT_MS, AgentBadResponseError, AgentRefusedError, AgentTimeoutError, createAgentClient,
+} from '../src/agent/client.ts';
 
 function fakeRawFetch(status: number, text: string, contentType: string): typeof fetch {
   return (async (url: string | URL | Request, init?: RequestInit) => {
@@ -23,6 +25,59 @@ async function requestedUrl(baseUrl: string): Promise<string> {
   await createAgentClient(baseUrl, 's3cret', fakeFetch(200, STATUS_BODY)).status();
   return fakeFetch.lastUrl;
 }
+
+describe('createAgentClient, on the way out (redirects and timeouts)', () => {
+  it('never follows a redirect, so the secret header cannot be carried to another origin', async () => {
+    const f = fakeFetch(200, STATUS_BODY);
+    await createAgentClient('https://wpjtest.wp.test', 's3cret-long-enough-0123', f).status();
+    expect(fakeFetch.lastInit?.redirect).toBe('manual');
+    await createAgentClient('https://wpjtest.wp.test', 's3cret-long-enough-0123', f).discover();
+    expect(fakeFetch.lastInit?.redirect).toBe('manual');
+  });
+
+  it('bounds every request with a timeout signal', async () => {
+    const f = fakeFetch(200, STATUS_BODY);
+    await createAgentClient('https://wpjtest.wp.test', 's3cret-long-enough-0123', f).status();
+    expect(fakeFetch.lastInit?.signal).toBeInstanceOf(AbortSignal);
+    expect(AGENT_TIMEOUT_MS).toBe(30_000);
+  });
+
+  it('turns a 301 into a named error naming where it pointed, without the secret', async () => {
+    const secret = 'redirect-secret-value-0123456789';
+    const f = (async (url: string | URL | Request, init?: RequestInit) => {
+      fakeFetch.lastInit = init;
+      return new Response(null, { status: 301, headers: { location: 'https://elsewhere.example/landing?x=1' } });
+    }) as unknown as typeof fetch;
+    const client = createAgentClient('https://wpjtest.wp.test', secret, f);
+
+    const error = await client.status().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AgentBadResponseError);
+    expect((error as Error).message).toMatch(/redirected \(HTTP 301\) to https:\/\/elsewhere\.example/);
+    expect((error as Error).message).toMatch(/WPJ_BASE_URL is probably wrong/);
+    expect((error as Error).message).not.toContain('landing');
+    expect((error as Error).message).not.toContain(secret);
+  });
+
+  it('names a relative redirect by the origin it resolves to', async () => {
+    const f = (async () => new Response(null, { status: 302, headers: { location: '/wp-login.php' } })) as unknown as typeof fetch;
+    await expect(createAgentClient('https://wpjtest.wp.test/', 'x'.repeat(16), f).status())
+      .rejects.toThrow(/redirected \(HTTP 302\) to https:\/\/wpjtest\.wp\.test/);
+  });
+
+  it('turns an abort into a named, loud timeout error', async () => {
+    const f = (async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); }) as unknown as typeof fetch;
+    const error = await createAgentClient('https://wpjtest.wp.test', 'x'.repeat(16), f).logDelta('end').catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AgentTimeoutError);
+    expect((error as Error).message).toMatch(/did not answer "logDelta" within 30 s/);
+  });
+
+  it('treats a plain AbortError the same way', async () => {
+    const f = (async () => { throw new DOMException('This operation was aborted', 'AbortError'); }) as unknown as typeof fetch;
+    await expect(createAgentClient('https://wpjtest.wp.test', 'x'.repeat(16), f).discover()).rejects.toBeInstanceOf(AgentTimeoutError);
+  });
+});
 
 describe('createAgentClient', () => {
   it('posts to the agent route with the shared secret header', async () => {
