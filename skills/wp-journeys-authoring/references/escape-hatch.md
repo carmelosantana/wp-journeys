@@ -62,10 +62,8 @@ export default journey;
 | Only a 401, a 403 or the login redirect satisfies `denyExpected: true`. | A 404 or 5xx on a denial is a finding. So is an unexpected 403 on `denyExpected: false`. |
 | A result that is not a `JourneyResult` is refused, and the refusal names the module. | |
 
-## Importing the SDK (an open gap)
+## Importing the SDK
 
-wp-journeys has no `exports` or `types` entry yet, so there is no `import … from 'wp-journeys'`.
-Replace `<wp-journeys>` above with a path to a **checkout** of wp-journeys. Node 22 also refuses
-to strip types from any `.ts` file under `node_modules`, so the value import (`runAsActor`)
-cannot come from an npm-installed copy either. `import type` lines are erased before they
-load, so they cost nothing at run time.
+wp-journeys is used from a clone; it is not distributed on npm, and has no `exports` entry, so
+there is no `import … from 'wp-journeys'`. Replace `<wp-journeys>` above with a path to that
+clone. `import type` lines are erased before the module loads, so they cost nothing at run time.

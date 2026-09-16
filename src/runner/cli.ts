@@ -421,7 +421,7 @@ export async function main(
   // deactivate, a baseline and a whole suite first.
   const plan = await manifestPlan(env, plugin);
 
-  // The browser too (R93): a browser that was never fetched must not cost the operator a
+  // The browser too: a browser that was never fetched must not cost the operator a
   // deactivate and a reactivate of the plugin under test first.
   const browser = await launch();
   let results: JourneyResult[];

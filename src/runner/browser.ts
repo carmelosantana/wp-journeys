@@ -2,9 +2,9 @@
  * Launch the browser, and say plainly when it was never fetched.
  *
  * Installing `@playwright/test` does not download a browser; the browser is fetched by an
- * explicit command, never by a lifecycle script. On a fresh install, Playwright's launch fails
- * with a multi-line boxed banner that recommends `npx playwright install`, which fetches every
- * browser. The runner needs only Chromium, so it says exactly that, on one line (R93).
+ * explicit command (`pnpm browser`), never by a lifecycle script. On a fresh clone, Playwright's
+ * launch fails with a multi-line boxed banner that recommends `npx playwright install`, which
+ * fetches every browser. The runner needs only Chromium, so it says exactly that, on one line.
  */
 import { chromium } from '@playwright/test';
 import type { Browser } from '@playwright/test';

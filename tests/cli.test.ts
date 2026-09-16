@@ -294,7 +294,7 @@ describe('wpj skills (R99: routed through main\'s own argv)', () => {
   });
 });
 
-describe('the browser (R93)', () => {
+describe('the browser', () => {
   it('prints usage for a bare `wpj` without launching anything', async () => {
     let launched = false;
     const { value } = await quietly(() => main([], {}, noAgent, async () => { launched = true; return noLaunch(); }));

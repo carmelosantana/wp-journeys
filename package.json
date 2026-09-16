@@ -4,6 +4,8 @@
   "description": "Plugin-agnostic end-to-end user-journey runner for WordPress.",
   "type": "module",
   "license": "MIT",
+  "//private": "npm distribution is a spec non-goal for v1 (R100), and a published copy could not start anyway: Node refuses to strip TypeScript under node_modules. private keeps an accidental npm publish from shipping it.",
+  "private": true,
   "bin": { "wpj": "./bin/wpj.js" },
   "engines": { "node": ">=22" },
   "//files": "Explicit, so tests/ never ships: tests/fixtures holds a plugin that is a DELIBERATE defect (wpj-canary.php), and publishing that alongside the runner would put a working PHP warning generator on consumers' disks.",

@@ -98,12 +98,11 @@ a build script that is not explicitly allowlisted. Revisit if a future dependenc
 Any dependency added or bumped; any lockfile diff that cannot be explained from the
 `package.json` diff; any CI failure that mentions a package version nobody chose.
 
-## 2026-09-16: R59 and R93, promoting `@playwright/test` to `dependencies`
+## 2026-09-16: R59/R93, promoting `@playwright/test` to `dependencies` — WITHDRAWN (R100)
 
-**The problem (R59).** `package.json` had no `dependencies` field. But `bin` and `files` ship the
-CLI, and the CLI value-imports `chromium` from `@playwright/test` when the module loads. So on a
-consumer install, every `wpj` invocation fails with `ERR_MODULE_NOT_FOUND`, including a bare
-`wpj`, which should print usage.
+**The concern (R59).** `package.json` has no `dependencies` field, but the CLI value-imports
+`chromium` from `@playwright/test` when it loads. An npm-installed `wpj` would therefore fail
+with `ERR_MODULE_NOT_FOUND` before it could even print usage.
 
 **The gate (R93, run by the controller; reads only, nothing installed).**
 
@@ -112,44 +111,33 @@ consumer install, every `wpj` invocation fails with `ERR_MODULE_NOT_FOUND`, incl
 | The chain `@playwright/test` → `playwright` → `playwright-core`, all 1.63.0 | No lifecycle scripts. No `optionalDependencies`. |
 | Lockfile | No `requiresBuild`, tarball or git resolutions. `allowBuilds: []`. |
 | Version | 1.63.0 is unchanged; it was vetted above (LOW). |
-| Does the install fetch a browser? | **No.** The browser is still fetched by an explicit command. So a `peerDependencies` entry buys only version drift, because npm 7+ and pnpm install peers automatically anyway. |
+| Does the install fetch a browser? | **No.** The browser is still fetched by an explicit command (`pnpm browser`). |
 | Backdoor paths (`.vscode/tasks.json`, `.claude/settings.json`, `setup.mjs`) | None in the repo. |
 
-**Decision.** Move the package to `dependencies`, pinned exactly at `1.63.0`, with a lockfile
-diff limited to the importer section, made by `pnpm install --offline`.
+**Outcome: the move is WITHDRAWN.** Publishing to npm is a spec non-goal
+(`docs/superpowers/specs/2026-09-06-wp-journeys.md`: "distribution as an installable package is a
+later decision"). v1 runs from a clone, where `devDependencies` are installed. So
+`@playwright/test` stays in `devDependencies`, and neither the lockfile nor the store was
+touched. `package.json` is now `"private": true`, so nothing can be published by accident.
 
-**What the runner does about the browser.** A launch that fails with Playwright's
-`Executable doesn't exist` banner becomes one line naming `npx playwright install chromium`
-(`src/runner/browser.ts`). `wpj run` launches the browser before it touches the site. A bare
-`wpj` still prints usage and launches nothing.
+**What was kept, because it helps people running from a clone.** A launch that fails with
+Playwright's `Executable doesn't exist` banner becomes one line naming
+`npx playwright install chromium` (`src/runner/browser.ts`). `wpj run` also launches the browser
+before it touches the site.
 
-**Packaging.** `files` now includes `skills`. `pnpm pack --dry-run` lists `bin/`, `src/`,
-`mu-plugin/`, `skills/` and `package.json`. It lists nothing from `tests/` (so no canary) and no
-`.env`.
+**What the later npm decision must settle:**
 
-**Status: the move itself is BLOCKED (Task 16).** `pnpm install --offline` did not complete:
+1. **Runtime dependency placement.** `@playwright/test` would need to be in `dependencies` (the
+   gate above covers it), or the CLI would need to stop importing it at load time.
+2. **A build step.** Node refuses to strip types from `.ts` files under `node_modules`, and the
+   package ships `bin/wpj.js` → `src/runner/cli.ts`. Reproduced on v22.23.2:
 
-```
-[ERR_PNPM_NO_OFFLINE_META] Failed to resolve @typescript/typescript-sunos-x64@7.0.2 in package mirror …
-```
+   ```
+   Error [ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING]: Stripping types is currently unsupported for files under node_modules, for "file:///…/node_modules/pkg/src/a.ts"
+   ```
 
-A package.json change makes pnpm re-resolve, and re-resolving needs registry metadata that is
-not cached. As a check, a scratch copy (`.superpowers/tmp/r93`, same filesystem as the store)
-had only the importer move made by hand, and was then installed with
-`pnpm install --offline --frozen-lockfile`. pnpm left that lockfile byte-identical ("Lockfile is
-up to date, resolution step is skipped"), but it still could not link. The local store is
-missing tarballs the lockfile names:
+3. **An `exports`/`types` entry.** Without one, an escape-hatch module cannot write
+   `import type { Journey } from 'wp-journeys'`.
 
-```
-[ERR_PNPM_NO_OFFLINE_TARBALL] … https://registry.npmjs.org/@playwright/test/-/test-1.63.0.tgz
-[ERR_PNPM_NO_OFFLINE_TARBALL] … https://registry.npmjs.org/@vitest/spy/-/spy-5.0.0.tgz
-```
-
-The premise "the store already holds it" is false for this store, so the move needs a network
-fetch of versions that are already vetted. Nothing was fetched. `package.json` and
-`pnpm-lock.yaml` are unchanged on this point, pending a ruling.
-
-**A second publish blocker, found here.** Node 22 refuses to strip types from `.ts` files under
-`node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, reproduced on v22.23.2). The
-published package runs `bin/wpj.js` → `src/runner/cli.ts`, so an npm-installed `wpj` cannot
-start even once Playwright resolves. Publishing needs a build step or another decision.
+`files` already includes `skills`, so a future package would carry what `wpj skills install`
+links.

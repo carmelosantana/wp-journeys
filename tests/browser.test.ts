@@ -14,7 +14,7 @@ const PLAYWRIGHT_MISSING = 'browserType.launch: Executable doesn\'t exist at /ho
   + '║ <3 Playwright Team                                         ║\n'
   + '╚════════════════════════════════════════════════════════════╝';
 
-describe('launchChromium (R93)', () => {
+describe('launchChromium', () => {
   it('turns Playwright\'s missing-executable banner into one line naming the install command', async () => {
     const error = await launchChromium(() => Promise.reject(new Error(PLAYWRIGHT_MISSING))).catch((e: unknown) => e);
 
