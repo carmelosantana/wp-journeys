@@ -92,6 +92,12 @@ function asManifestResult(entry: ManifestJourney, module: string, raw: unknown):
     name: entry.name, actor: entry.actor, surface: entry.surface,
     entitiesCreated: result.entitiesCreated, findings: result.findings,
   };
+  if (result.notes !== undefined) {
+    if (!Array.isArray(result.notes) || !result.notes.every((n) => typeof n === 'string')) {
+      return refuse('"notes" is not an array of strings');
+    }
+    relabelled.notes = result.notes;
+  }
   if (result.skipped !== undefined) relabelled.skipped = result.skipped;
   if (result.skipReason !== undefined) relabelled.skipReason = result.skipReason;
   return relabelled;

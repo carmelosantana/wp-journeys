@@ -37,6 +37,11 @@ export interface JourneyResult {
    */
   skipped?: boolean;
   skipReason?: string;
+  /**
+   * What the row must SAY whatever its outcome: a precondition a pass depends on, a check it
+   * could not make, a finding it discounted by declaration. Never affects the outcome.
+   */
+  notes?: string[];
 }
 
 /** A named, actor-bound, surface-tagged scenario. */

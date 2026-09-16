@@ -185,6 +185,25 @@ describe('runAsActor', () => {
     expect(serialised).toContain('wpj_login=<REDACTED>');
   });
 
+  it('carries what the body noted onto the result, even when the body then throws', async () => {
+    // A note is how a row SAYS what it did not check (R74, R75, R78) — losing it on a throw
+    // would hide that exactly when the row is being read most closely.
+    const page = new FakePage();
+    const { agent } = fakeAgent();
+
+    const result = await runAsActor(
+      new FakeBrowser(page).asBrowser(), CFG, agent, 'noted', Actor.ANONYMOUS, 'frontend',
+      async (_target, _sentinel, note) => {
+        note('first');
+        note('second');
+        throw new Error('then it broke');
+      },
+    );
+
+    expect(result.notes).toEqual(['first', 'second']);
+    expect(result.findings).toEqual([{ kind: 'assertion', text: 'then it broke' }]);
+  });
+
   it('records a thrown body as an assertion finding rather than aborting the run', async () => {
     // One failing journey must never take the rest of the run down with it (R3).
     const page = new FakePage();

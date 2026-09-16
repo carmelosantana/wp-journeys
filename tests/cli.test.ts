@@ -294,6 +294,14 @@ describe('runSuite', () => {
     expect(malformed.entitiesCreated).toBe(3);
   });
 
+  it('keeps a malformed result\'s notes when it is turned into a failure', async () => {
+    const suite = register(scripted('noted', async () => resultOf('noted', { skipReason: 'half', notes: ['said something'] })));
+
+    const [result] = await runSuite(suite, nothing, nothing, nothing, BASELINE);
+
+    expect(result?.notes).toEqual(['said something']);
+  });
+
   it('returns results the renderer can always consume', async () => {
     // The contract runSuite owes the summary: whatever the journeys did, every result it hands
     // back is well-formed enough for `outcomeOf` — so the summary always prints.

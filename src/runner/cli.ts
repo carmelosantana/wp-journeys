@@ -202,13 +202,15 @@ export async function runSuite(
       outcomeOf(settled);
       results.push(settled);
     } catch (error) {
-      results.push({
+      const failed: JourneyResult = {
         name: journey.name,
         actor: journey.actor,
         surface: journey.surface,
         entitiesCreated: raw?.entitiesCreated ?? 0,
         findings: [...carried, { kind: 'assertion', text: messageOf(error) }],
-      });
+      };
+      if (raw?.notes) failed.notes = raw.notes;
+      results.push(failed);
     }
   }
 

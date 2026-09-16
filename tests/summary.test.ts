@@ -121,6 +121,14 @@ describe('renderSummary', () => {
     });
   });
 
+  it('prints a journey\'s notes under it whatever its outcome — a pass can still say what it did not check', () => {
+    const noted = (result: JourneyResult): JourneyResult => ({ ...result, notes: ['precondition: fresh site'] });
+    const lines = renderSummary([noted(pass), noted(skip), noted(fail)]).split('\n');
+
+    expect(lines.filter((line) => line === '      · precondition: fresh site')).toHaveLength(3);
+    expect(lines.indexOf('      · precondition: fresh site')).toBe(lines.findIndex((l) => l.includes('frontend-renders')) + 1);
+  });
+
   it('is deterministic for the same input', () => {
     expect(renderSummary([pass, skip, fail])).toBe(renderSummary([pass, skip, fail]));
   });

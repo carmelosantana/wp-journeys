@@ -677,6 +677,12 @@ describe('interpret', () => {
       expect((error?.cause as Error).message).toBe('module exploded');
     });
 
+    it('refuses a module result whose notes are not an array of strings, before the summary renders it', async () => {
+      const { run } = arrange({ name: 'bn', actor: 'editor', surface: 'admin', module: 'tests/fixtures/journeys/bad-notes.ts' }, repo);
+
+      await expect(run()).rejects.toThrow(/journey "bn": module .* "notes" is not an array of strings/);
+    });
+
     it('fails when the module default export is not a Journey', async () => {
       const { run } = arrange({ name: 'plain', actor: 'editor', surface: 'admin', module: 'tests/helpers/fakes.ts' }, repo);
 

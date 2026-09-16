@@ -53,8 +53,9 @@ function renderJourney(result: JourneyResult): string {
     // empty pair of brackets that would read as a rendering bug and invite dismissal.
     head += ` — skipped (${result.skipReason ?? 'no reason given'})`;
   }
-  if (outcome !== 'fail') return head;
-  return `${head}\n${result.findings.map(renderFinding).join('\n')}`;
+  const lines = [head, ...(result.notes ?? []).map((note) => `      · ${note}`)];
+  if (outcome === 'fail') lines.push(...result.findings.map(renderFinding));
+  return lines.join('\n');
 }
 
 interface SurfaceCoverage {

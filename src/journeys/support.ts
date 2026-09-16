@@ -26,8 +26,11 @@ import type { Finding } from '../sentinel/phplog.ts';
 import { installSentinel, type Sentinel } from '../sentinel/sentinel.ts';
 import type { JourneyResult, SurfaceAxis } from './index.ts';
 
-/** What a journey actually does, returning how many entities it created. */
-export type JourneyBody = (page: Page, sentinel: Sentinel) => Promise<number>;
+/**
+ * What a journey actually does, returning how many entities it created. `note` records a line
+ * the summary prints under the row whatever its outcome.
+ */
+export type JourneyBody = (page: Page, sentinel: Sentinel, note: (text: string) => void) => Promise<number>;
 
 /**
  * A screen every logged-in role can reach, and no logged-out visitor can (R54, R67).
@@ -172,21 +175,24 @@ export async function runAsActor(
     }
 
     const thrown: Finding[] = [];
+    const notes: string[] = [];
     let entitiesCreated = 0;
     try {
       if (!isAnonymous(actor)) await authenticate(page, sentinel, agent, actor);
-      entitiesCreated = await body(page, sentinel);
+      entitiesCreated = await body(page, sentinel, (text) => { notes.push(text); });
     } catch (error) {
       // R3: a throw is this journey's failure, not the run's. Recorded, then the sentinel is
       // still drained and the context is still closed.
       thrown.push(assertionFinding(messageOf(error)));
     }
 
-    return {
+    const result: JourneyResult = {
       name, actor, surface, entitiesCreated,
       // Observed first, then the journey's own verdict, which usually explains them.
       findings: [...await drainOrSaySo(sentinel), ...thrown],
     };
+    if (notes.length > 0) result.notes = notes;
+    return result;
   } finally {
     await context.close();
   }
