@@ -8,6 +8,7 @@ import type { Surface } from '../discovery/types.ts';
 import type { Journey, JourneyResult, SurfaceAxis } from '../journeys/index.ts';
 import { CONTROL_SCREEN, runAsActor } from '../journeys/support.ts';
 import { accessMatrix } from './admin-access-matrix.ts';
+import { discountDeclaredDeprecation } from './deprecation.ts';
 
 /**
  * A journey whose SUBJECT is absent, declared as the third outcome rather than run.
@@ -90,8 +91,13 @@ export function adminSweep(plugin: string, delta: Surface, actor: Actor): Journe
  * is not the assertion (R5): `shortcodeRenderDefect` is what proves the endpoint ran and the tag
  * expanded. It touches only the frontend, and says so in its surface.
  */
-export function shortcodeRender(plugin: string, delta: Surface, actor: Actor): Journey {
+export function shortcodeRender(
+  plugin: string, delta: Surface, actor: Actor, deprecated: readonly string[] = [],
+): Journey {
   const name = `shortcode-render:${plugin}:${actor}`;
+  // A declared-deprecated tag renders on its own row (R80), never here: this row discounts
+  // nothing, so a deprecation notice from any tag rendered in it stays a finding.
+  const tags = delta.shortcodes.filter((tag) => !deprecated.includes(tag));
   return {
     name,
     actor,
@@ -100,15 +106,50 @@ export function shortcodeRender(plugin: string, delta: Surface, actor: Actor): J
       if (delta.shortcodes.length === 0) {
         return skipped(name, actor, 'frontend', `${plugin} registered no shortcodes`);
       }
+      if (tags.length === 0) {
+        return skipped(name, actor, 'frontend',
+          `every shortcode ${plugin} registered is declared deprecated, and each renders on its own row`);
+      }
       return runAsActor(browser, cfg, agent, name, actor, 'frontend', async (page, sentinel) => {
         // Render through the front end so the shortcode runs in its real context.
-        for (const tag of delta.shortcodes) {
+        for (const tag of tags) {
           await sentinel.visit(page, shortcodeRenderUrl(tag));
           const defect = shortcodeRenderDefect(await page.content(), tag);
           if (defect) throw new Error(defect);
         }
         return 0;
       });
+    },
+  };
+}
+
+/**
+ * Render ONE shortcode the manifest declares deprecated, on its own row (R74, R80).
+ *
+ * Its own journey means its own sentinel and its own log window, so a notice here was raised by
+ * this render and no other, and the discount below can reach nothing but this tag's findings.
+ * Only core's deprecation notice naming this tag is discounted; everything else still fails, and
+ * the row says what it discounted — or that the notice it was declared for never came.
+ */
+export function deprecatedShortcodeRender(plugin: string, tag: string, actor: Actor): Journey {
+  const name = `shortcode-render:${plugin}:${actor}:[${tag}]`;
+  return {
+    name,
+    actor,
+    surface: 'frontend',
+    run: async (browser, cfg, agent) => {
+      const result = await runAsActor(browser, cfg, agent, name, actor, 'frontend', async (page, sentinel) => {
+        await sentinel.visit(page, shortcodeRenderUrl(tag));
+        const defect = shortcodeRenderDefect(await page.content(), tag);
+        if (defect) throw new Error(defect);
+        return 0;
+      });
+      const { kept, discounted } = discountDeclaredDeprecation(result.findings, tag);
+      const note = discounted.length > 0
+        ? `discounted ${discounted.length} deprecation notice${discounted.length === 1 ? '' : 's'} naming [${tag}], `
+          + 'which the manifest declares deprecated (deprecated.shortcodes)'
+        : `[${tag}] is declared deprecated, but its render raised no deprecation notice naming it`;
+      return { ...result, findings: kept, notes: [...(result.notes ?? []), note] };
     },
   };
 }

@@ -7,7 +7,7 @@ import type { Journey } from '../src/journeys/index.ts';
 import { CONTROL_SCREEN } from '../src/journeys/support.ts';
 import { accessMatrix } from '../src/suite/admin-access-matrix.ts';
 import { conformanceSurface, coreSuite } from '../src/suite/index.ts';
-import { adminSweep, blockRender, shortcodeRender, sweepPlan } from '../src/suite/rendered-surface.ts';
+import { adminSweep, blockRender, deprecatedShortcodeRender, shortcodeRender, sweepPlan } from '../src/suite/rendered-surface.ts';
 import { CFG, FakeBrowser, FakePage, fakeAgent, landsOn, response } from './helpers/fakes.ts';
 import type { Surface } from '../src/discovery/types.ts';
 
@@ -213,11 +213,13 @@ describe('coreSuite', () => {
   });
 });
 
+/** Nothing is touched by a journey that skips before driving anything. */
+const nothing = undefined as never;
+
 describe('a journey whose subject is absent skips, and a skip is never a pass', () => {
   const empty: Surface = { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} };
   // The skip is decided before anything is driven, so no browser, config or agent is touched.
   // Passing nothing is the proof of that: a journey that reached for one would throw here.
-  const nothing = undefined as never;
 
   it('adminSweep skips when the plugin added no admin screens', async () => {
     const result = await adminSweep('acme', empty, Actor.EDITOR).run(nothing, nothing, nothing);
@@ -309,5 +311,100 @@ describe('blockRender (R57, R78: what a block render can and cannot prove)', () 
     expect(result.findings).toMatchObject([
       { kind: 'assertion', text: expect.stringContaining('the block acme/hello produced no wp-journeys render marker') },
     ]);
+  });
+});
+
+describe('a declared-deprecated shortcode renders on its own row (R74, R80)', () => {
+  const tags: Surface = { ...delta, shortcodes: ['acme', 'acme_old', 'acme_older'] };
+  const CORE = 'in /var/www/html/wp-includes/functions.php on line 6260';
+  const noticeNaming = (tag: string) =>
+    `[16-Sep-2026 14:03:20 UTC] PHP Notice:  Function ${tag} was called <strong>incorrectly</strong>. The [${tag}] shortcode is deprecated. ${CORE}`;
+  const expanded = '<div data-wpj-render="1" data-wpj-expanded="1"><p>x</p></div>';
+  const baseline = {
+    surface: { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} },
+    snapshot: { options: [], tables: [], cron: [], userMeta: [] },
+    activeAtStart: false, logNoise: [], bodyNoise: [],
+  };
+
+  /** Run one journey anonymously; its render writes `lines` to the log window. */
+  async function runWith(journey: Journey, lines: string[]) {
+    const page = new FakePage();
+    page.body = expanded;
+    const { agent } = fakeAgent({
+      logDelta: async (offset) => (offset === 'end'
+        ? { offset: 100, lines: [], available: true }
+        : { offset: 200, lines, available: true }),
+    });
+    return { page, result: await journey.run(new FakeBrowser(page).asBrowser(), CFG, agent) };
+  }
+
+  it('gives each declared tag its own journey, per actor, and leaves the rest grouped', () => {
+    const suite = coreSuite('acme', tags, baseline, async () => {}, [], ['acme_old', 'acme_older']);
+
+    expect(Object.keys(suite).filter((name) => name.startsWith('shortcode-render:')).sort()).toEqual([
+      'shortcode-render:acme:administrator',
+      'shortcode-render:acme:administrator:[acme_old]',
+      'shortcode-render:acme:administrator:[acme_older]',
+      'shortcode-render:acme:anonymous',
+      'shortcode-render:acme:anonymous:[acme_old]',
+      'shortcode-render:acme:anonymous:[acme_older]',
+    ]);
+  });
+
+  it('keeps declared tags out of the grouped row', async () => {
+    const { page } = await runWith(shortcodeRender('acme', tags, Actor.ANONYMOUS, ['acme_old', 'acme_older']), []);
+
+    expect(page.gotos).toEqual(['/?wpj_render=%5Bacme%5D']);
+  });
+
+  it('discounts the declared notice on the tag\'s own row, and SAYS so', async () => {
+    const { page, result } = await runWith(deprecatedShortcodeRender('acme', 'acme_old', Actor.ANONYMOUS), [noticeNaming('acme_old')]);
+
+    expect(page.gotos).toEqual(['/?wpj_render=%5Bacme_old%5D']);
+    expect(outcomeOf(result)).toBe('pass');
+    expect(result.notes).toEqual([
+      'discounted 1 deprecation notice naming [acme_old], which the manifest declares deprecated (deprecated.shortcodes)',
+    ]);
+  });
+
+  it('never discounts a notice naming ANOTHER declared tag, even on a declared tag\'s row (R80)', async () => {
+    const { result } = await runWith(
+      deprecatedShortcodeRender('acme', 'acme_old', Actor.ANONYMOUS), [noticeNaming('acme_old'), noticeNaming('acme_older')],
+    );
+
+    expect(outcomeOf(result)).toBe('fail');
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.text).toContain('Function acme_older was called incorrectly');
+  });
+
+  it('keeps an UNDECLARED deprecation red on the grouped row', async () => {
+    const { result } = await runWith(shortcodeRender('acme', tags, Actor.ANONYMOUS, ['acme_older']), [noticeNaming('acme_old')]);
+
+    expect(outcomeOf(result)).toBe('fail');
+    expect(result.notes).toBeUndefined();
+  });
+
+  it('keeps every other finding on the declared tag\'s render red', async () => {
+    const warning = '[16-Sep-2026 14:03:20 UTC] PHP Warning:  Undefined array key "url" in /var/www/html/wp-content/plugins/acme/old.php on line 9';
+    const { result } = await runWith(deprecatedShortcodeRender('acme', 'acme_old', Actor.ANONYMOUS), [noticeNaming('acme_old'), warning]);
+
+    expect(outcomeOf(result)).toBe('fail');
+    expect(result.findings.map((f) => f.text)).toEqual([expect.stringContaining('Undefined array key "url"')]);
+    expect(result.notes?.[0]).toMatch(/^discounted 1 deprecation notice/);
+  });
+
+  it('says so when a declared tag rendered without the notice it was declared for', async () => {
+    const { result } = await runWith(deprecatedShortcodeRender('acme', 'acme_old', Actor.ANONYMOUS), []);
+
+    expect(outcomeOf(result)).toBe('pass');
+    expect(result.notes).toEqual(['[acme_old] is declared deprecated, but its render raised no deprecation notice naming it']);
+  });
+
+  it('skips the grouped row when every discovered tag is declared, saying where they went', async () => {
+    const only: Surface = { ...delta, shortcodes: ['acme_old'] };
+    const result = await shortcodeRender('acme', only, Actor.ANONYMOUS, ['acme_old']).run(nothing, nothing, nothing);
+
+    expect(outcomeOf(result)).toBe('skip');
+    expect(result.skipReason).toMatch(/every shortcode acme registered is declared deprecated/);
   });
 });

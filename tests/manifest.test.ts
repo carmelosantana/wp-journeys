@@ -69,6 +69,37 @@ describe('parseManifest', () => {
     expect(() => parseManifest(bad, 'f.json')).toThrow(/duplicate journey name/);
   });
 
+  describe('deprecated (R74)', () => {
+    it('accepts a list of deprecated shortcode tags', () => {
+      const manifest = parseManifest({ ...valid, deprecated: { shortcodes: ['acme_old'] } }, 'f.json');
+      expect(manifest.deprecated).toEqual({ shortcodes: ['acme_old'] });
+    });
+
+    it('leaves deprecated absent when the manifest declares none', () => {
+      expect(parseManifest(valid, 'f.json')).not.toHaveProperty('deprecated');
+    });
+
+    it('refuses an empty list, an empty tag, a duplicate and an unknown key', () => {
+      expect(() => parseManifest({ ...valid, deprecated: { shortcodes: [] } }, 'f.json'))
+        .toThrow(/"deprecated.shortcodes" must be a non-empty array/);
+      expect(() => parseManifest({ ...valid, deprecated: { shortcodes: [''] } }, 'f.json'))
+        .toThrow(/"deprecated.shortcodes\[0\]" must be a non-empty string/);
+      expect(() => parseManifest({ ...valid, deprecated: { shortcodes: ['a', 'a'] } }, 'f.json'))
+        .toThrow(/"deprecated.shortcodes" lists "a" twice/);
+      expect(() => parseManifest({ ...valid, deprecated: { shortcodes: ['a'], blocks: [] } }, 'f.json'))
+        .toThrow(/"deprecated": unknown key "blocks"/);
+    });
+
+    it('refuses a journey that renders a declared-deprecated tag itself — the discount lives on that tag\'s own row', () => {
+      const bad = {
+        ...withJourney({ name: 's', actor: 'administrator', surface: 'frontend', shortcodes: ['acme_old'] }),
+        deprecated: { shortcodes: ['acme_old'] },
+      };
+      expect(() => parseManifest(bad, 'f.json'))
+        .toThrow(/journey "s": shortcodes\[0\] "acme_old" is declared deprecated/);
+    });
+  });
+
   it('rejects a non-object entirely', () => {
     expect(() => parseManifest(null, 'f.json')).toThrow(/f\.json: not a JSON object/);
   });

@@ -7,7 +7,7 @@ import type { Journey } from '../journeys/index.ts';
 import type { Baseline } from './baseline.ts';
 import { frontendRenders } from './frontend-renders.ts';
 import { lifecycle } from './lifecycle.ts';
-import { adminSweep, blockRender, shortcodeRender } from './rendered-surface.ts';
+import { adminSweep, blockRender, deprecatedShortcodeRender, shortcodeRender } from './rendered-surface.ts';
 
 export type { AccessCase } from './admin-access-matrix.ts';
 export { accessMatrix } from './admin-access-matrix.ts';
@@ -36,6 +36,7 @@ export function conformanceSurface(before: Surface, after: Surface): Surface {
 }
 
 /**
+ * @param deprecatedShortcodes tags the manifest declares deprecated (R74); each renders on its own row
  * @param authored the plugin's own journeys, from its manifest. They run after the discovered
  *   surface and BEFORE the lifecycle journey, which uninstalls the plugin every other journey
  *   needs. A name that collides with a core journey is refused by `register`, never dropped.
@@ -46,12 +47,17 @@ export function coreSuite(
   baseline: Baseline,
   uninstall: () => Promise<void>,
   authored: readonly Journey[] = [],
+  deprecatedShortcodes: readonly string[] = [],
 ): Record<string, Journey> {
   return register(
     frontendRenders,
     ...ALL_ACTORS.map((actor) => adminSweep(plugin, delta, actor)),
     // R77: logged in AND anonymously, as the spec's core-suite step says.
-    ...RENDER_ACTORS.map((actor) => shortcodeRender(plugin, delta, actor)),
+    ...RENDER_ACTORS.flatMap((actor) => [
+      shortcodeRender(plugin, delta, actor, deprecatedShortcodes),
+      // R74, R80: each declared-deprecated tag on its own row, so its discount reaches only it.
+      ...deprecatedShortcodes.map((tag) => deprecatedShortcodeRender(plugin, tag, actor)),
+    ]),
     ...RENDER_ACTORS.map((actor) => blockRender(plugin, delta, actor)),
     ...authored,
     // Uninstall runs last: it removes the plugin the other journeys need.

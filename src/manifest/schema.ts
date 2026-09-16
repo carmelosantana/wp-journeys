@@ -57,14 +57,20 @@ export interface Manifest {
   plugin: string;
   /** The admin menu slug that proves the plugin is live; absent means always run. */
   gate?: { screen: string };
+  /**
+   * Surface the plugin deprecates on purpose (R74). A tag listed here renders on its own row, and
+   * core's deprecation notice naming it is discounted there — and said so — rather than failing.
+   */
+  deprecated?: { shortcodes: string[] };
   journeys: ManifestJourney[];
 }
 
 const SURFACES: readonly SurfaceAxis[] = ['admin', 'frontend', 'both'];
 
 /** `$schema` is for editor completion and `description` stands in for the comments JSON lacks. */
-const MANIFEST_KEYS = ['$schema', 'description', 'version', 'plugin', 'gate', 'journeys'];
+const MANIFEST_KEYS = ['$schema', 'description', 'version', 'plugin', 'gate', 'deprecated', 'journeys'];
 const GATE_KEYS = ['screen'];
+const DEPRECATED_KEYS = ['shortcodes'];
 const JOURNEY_KEYS = ['name', 'actor', 'surface', 'screens', 'settings', 'shortcodes', 'module'];
 const SCREEN_KEYS = ['url', 'allow', 'deny'];
 const SETTING_KEYS = ['url', 'field', 'value', 'readBack'];
@@ -139,7 +145,7 @@ function parseSteps<T>(raw: unknown, key: string, parse: (item: unknown, index: 
   return raw.map(parse);
 }
 
-function parseJourney(raw: unknown, index: number, fail: Fail): ManifestJourney {
+function parseJourney(raw: unknown, index: number, fail: Fail, deprecated: readonly string[]): ManifestJourney {
   if (!isObject(raw)) return fail(`journeys[${index}] is not an object`);
   const name = raw.name;
   if (!isNonEmptyString(name)) return fail(`journeys[${index}] has no "name"`);
@@ -154,9 +160,15 @@ function parseJourney(raw: unknown, index: number, fail: Fail): ManifestJourney 
 
   const screens = parseSteps(raw.screens, 'screens', (item, i) => parseScreen(item, i, actor, failNamed), failNamed);
   const settings = parseSteps(raw.settings, 'settings', (item, i) => parseSetting(item, i, failNamed), failNamed);
-  const shortcodes = parseSteps(raw.shortcodes, 'shortcodes', (item, i) => (
-    isNonEmptyString(item) ? item : failNamed(`shortcodes[${i}] must be a non-empty string`)
-  ), failNamed);
+  const shortcodes = parseSteps(raw.shortcodes, 'shortcodes', (item, i) => {
+    if (!isNonEmptyString(item)) return failNamed(`shortcodes[${i}] must be a non-empty string`);
+    // A declared tag's discount applies on its OWN row only (R80); rendered here, among other
+    // steps, its notice could not be attributed and would fail this journey instead.
+    if (deprecated.includes(item)) {
+      return failNamed(`shortcodes[${i}] "${item}" is declared deprecated — the core suite renders it on its own row`);
+    }
+    return item;
+  }, failNamed);
   const module = raw.module;
   if (module !== undefined && !isNonEmptyString(module)) failNamed('"module" must be a non-empty string');
 
@@ -200,9 +212,24 @@ export function parseManifest(raw: unknown, file: string): Manifest {
     gate = { screen: raw.gate.screen };
   }
 
+  let deprecated: Manifest['deprecated'];
+  if (raw.deprecated !== undefined) {
+    if (!isObject(raw.deprecated)) return fail('"deprecated" must be an object');
+    refuseUnknownKeys(raw.deprecated, DEPRECATED_KEYS, (message) => fail(`"deprecated": ${message}`));
+    const tags = raw.deprecated.shortcodes;
+    if (!Array.isArray(tags) || tags.length === 0) return fail('"deprecated.shortcodes" must be a non-empty array');
+    const listed = new Set<string>();
+    tags.forEach((tag, i) => {
+      if (!isNonEmptyString(tag)) fail(`"deprecated.shortcodes[${i}]" must be a non-empty string`);
+      if (listed.has(tag as string)) fail(`"deprecated.shortcodes" lists "${String(tag)}" twice`);
+      listed.add(tag as string);
+    });
+    deprecated = { shortcodes: [...listed] };
+  }
+
   const seen = new Set<string>();
   const journeys = (raw.journeys as unknown[]).map((entry, index) => {
-    const journey = parseJourney(entry, index, fail);
+    const journey = parseJourney(entry, index, fail, deprecated?.shortcodes ?? []);
     if (seen.has(journey.name)) fail(`duplicate journey name "${journey.name}"`);
     seen.add(journey.name);
     return journey;
@@ -210,5 +237,6 @@ export function parseManifest(raw: unknown, file: string): Manifest {
 
   const manifest: Manifest = { version: 1, plugin: raw.plugin as string, journeys };
   if (gate) manifest.gate = gate;
+  if (deprecated) manifest.deprecated = deprecated;
   return manifest;
 }

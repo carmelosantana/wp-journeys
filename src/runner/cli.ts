@@ -22,6 +22,7 @@ import type { AgentClient } from '../agent/client.ts';
 import { loadConfig } from '../config.ts';
 import type { Config } from '../config.ts';
 import { projectSurface } from '../discovery/surface.ts';
+import type { Surface } from '../discovery/types.ts';
 import { messageOf } from '../errors.ts';
 import { outcomeOf } from '../journeys/index.ts';
 import { interpret } from '../manifest/interpret.ts';
@@ -115,7 +116,7 @@ export function wpCommands(wp: string, plugin: string): WpCommands {
 }
 
 /**
- * The plugin's own journeys, from the manifest in `WPJ_MANIFEST_DIR`.
+ * The plugin's own journeys and declarations, from the manifest in `WPJ_MANIFEST_DIR`.
  *
  * R70, first contact's first finding: "the plugin directory" is TWO paths on a real plugin. The
  * directory wp-harness MOUNTS is the plugin root; the directory holding `wp-journeys.json` is
@@ -130,7 +131,20 @@ export function wpCommands(wp: string, plugin: string): WpCommands {
  * zero-authoring case (that is what leaving the variable unset means), and a manifest written
  * for another plugin is refused before its journeys can drive this one.
  */
-export async function authoredJourneys(env: NodeJS.ProcessEnv, plugin: string): Promise<Journey[]> {
+const NO_SURFACE: Surface = { screens: [], blocks: [], shortcodes: [], restRoutes: [], caps: {} };
+const NO_BASELINE: Baseline = {
+  surface: NO_SURFACE, snapshot: { options: [], tables: [], cron: [], userMeta: [] },
+  logNoise: [], bodyNoise: [], activeAtStart: true,
+};
+
+export interface ManifestPlan {
+  /** The plugin's own journeys, interpreted. */
+  journeys: Journey[];
+  /** Shortcode tags the manifest declares deprecated (R74). */
+  deprecatedShortcodes: string[];
+}
+
+export async function manifestPlan(env: NodeJS.ProcessEnv, plugin: string): Promise<ManifestPlan> {
   if (env.WPJ_PLUGIN_DIR !== undefined) {
     throw new Error(
       'WPJ_PLUGIN_DIR is no longer read — set WPJ_MANIFEST_DIR to the directory that holds '
@@ -138,7 +152,11 @@ export async function authoredJourneys(env: NodeJS.ProcessEnv, plugin: string): 
     );
   }
   const dir = env.WPJ_MANIFEST_DIR;
-  if (!dir) return [];
+  if (dir === undefined) return { journeys: [], deprecatedShortcodes: [] };
+  // Set but empty is a mistake, not "unset": the operator named a manifest and got none.
+  if (dir === '') {
+    throw new Error('WPJ_MANIFEST_DIR is set but empty — name the directory holding wp-journeys.json, or unset it.');
+  }
 
   const manifest = await loadManifest(dir);
   if (manifest === null) {
@@ -154,7 +172,13 @@ export async function authoredJourneys(env: NodeJS.ProcessEnv, plugin: string): 
   }
   // The directory is passed EXPLICITLY: interpret() resolves and confines module paths
   // against it, and the runner's own cwd is not where any plugin keeps its journeys.
-  return interpret(manifest, dir);
+  const journeys = interpret(manifest, dir);
+  const deprecatedShortcodes = manifest.deprecated?.shortcodes ?? [];
+  // Build the core suite's NAMES now, with nothing real in it, so a collision is refused here —
+  // before the baseline deactivates anything — rather than inside coreSuite after it has. The
+  // names do not depend on the surface, only on the plugin and these two lists.
+  coreSuite(plugin, NO_SURFACE, NO_BASELINE, async () => {}, journeys, deprecatedShortcodes);
+  return { journeys, deprecatedShortcodes };
 }
 
 /**
@@ -276,7 +300,7 @@ export async function main(
 
   // Before anything touches the site: a manifest that cannot run must not cost the operator a
   // deactivate, a baseline and a whole suite first.
-  const authored = await authoredJourneys(env, plugin);
+  const plan = await manifestPlan(env, plugin);
 
   const commands = wpCommands(wp, plugin);
   const shell = (command: string) => async (): Promise<void> => {
@@ -296,7 +320,7 @@ export async function main(
   const browser = await chromium.launch();
   let results: JourneyResult[];
   try {
-    const suite = coreSuite(plugin, delta, baseline, shell(commands.uninstall), authored);
+    const suite = coreSuite(plugin, delta, baseline, shell(commands.uninstall), plan.journeys, plan.deprecatedShortcodes);
     results = await runSuite(suite, browser, cfg, agent, baseline);
   } finally {
     await browser.close();

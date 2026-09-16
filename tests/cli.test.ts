@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Actor } from '../src/actors/roles.ts';
 import { register } from '../src/journeys/index.ts';
 import type { Journey, JourneyResult } from '../src/journeys/index.ts';
-import { authoredJourneys, parseArgs, runSuite, wpCommands } from '../src/runner/cli.ts';
+import { main, manifestPlan, parseArgs, runSuite, wpCommands } from '../src/runner/cli.ts';
 import type { Baseline } from '../src/suite/baseline.ts';
 
 /** A per-request deprecation this site writes whatever is under test (R45). */
@@ -328,7 +328,7 @@ describe('runSuite', () => {
   });
 });
 
-describe('authoredJourneys (R70: the manifest directory is not the mount path)', () => {
+describe('manifestPlan (R70: the manifest directory is not the mount path)', () => {
   const dirs: string[] = [];
   afterEach(async () => {
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -341,22 +341,24 @@ describe('authoredJourneys (R70: the manifest directory is not the mount path)',
     return dir;
   }
 
-  const manifest = (plugin: string, journeys: unknown[]) => ({ version: 1, plugin, journeys });
+  const manifest = (plugin: string, journeys: unknown[], extra: Record<string, unknown> = {}) =>
+    ({ version: 1, plugin, journeys, ...extra });
   const denial = {
     name: 'acme-editor-is-denied', actor: 'editor', surface: 'admin',
     screens: [{ url: '/wp-admin/admin.php?page=acme', allow: [], deny: ['editor'] }],
   };
 
   it('authors nothing when no manifest directory is named — the zero-authoring run', async () => {
-    expect(await authoredJourneys({}, 'acme')).toEqual([]);
+    expect(await manifestPlan({}, 'acme')).toEqual({ journeys: [], deprecatedShortcodes: [] });
   });
 
-  it('interprets the manifest in WPJ_MANIFEST_DIR', async () => {
-    const dir = await manifestDir(manifest('acme', [denial]));
+  it('interprets the manifest in WPJ_MANIFEST_DIR, and hands over its declared deprecations (R74)', async () => {
+    const dir = await manifestDir(manifest('acme', [denial], { deprecated: { shortcodes: ['acme_old'] } }));
 
-    const journeys = await authoredJourneys({ WPJ_MANIFEST_DIR: dir }, 'acme');
+    const plan = await manifestPlan({ WPJ_MANIFEST_DIR: dir }, 'acme');
 
-    expect(journeys.map((j) => `${j.name}:${j.actor}:${j.surface}`)).toEqual(['acme-editor-is-denied:editor:admin']);
+    expect(plan.journeys.map((j) => `${j.name}:${j.actor}:${j.surface}`)).toEqual(['acme-editor-is-denied:editor:admin']);
+    expect(plan.deprecatedShortcodes).toEqual(['acme_old']);
   });
 
   it('resolves an escape-hatch module against the manifest directory, never the runner\'s cwd', async () => {
@@ -371,7 +373,7 @@ describe('authoredJourneys (R70: the manifest directory is not the mount path)',
       '    findings: [{ kind: "assertion", text: "the module beside the manifest ran" }] }) };',
     ].join('\n'));
 
-    const [journey] = await authoredJourneys({ WPJ_MANIFEST_DIR: dir }, 'acme');
+    const [journey] = (await manifestPlan({ WPJ_MANIFEST_DIR: dir }, 'acme')).journeys;
     const result = await journey?.run(nothing, nothing, nothing);
 
     expect(result?.findings).toEqual([{ kind: 'assertion', text: 'the module beside the manifest ran' }]);
@@ -383,21 +385,52 @@ describe('authoredJourneys (R70: the manifest directory is not the mount path)',
     // with not one authored journey in it.
     const dir = await manifestDir();
 
-    await expect(authoredJourneys({ WPJ_MANIFEST_DIR: dir }, 'acme'))
+    await expect(manifestPlan({ WPJ_MANIFEST_DIR: dir }, 'acme'))
       .rejects.toThrow(`WPJ_MANIFEST_DIR is set, but ${join(dir, 'wp-journeys.json')} does not exist`);
+  });
+
+  it('refuses WPJ_MANIFEST_DIR set to the empty string, rather than reading it as unset', async () => {
+    await expect(manifestPlan({ WPJ_MANIFEST_DIR: '' }, 'acme'))
+      .rejects.toThrow(/WPJ_MANIFEST_DIR is set but empty/);
   });
 
   it('refuses a manifest written for a different plugin', async () => {
     const dir = await manifestDir(manifest('other-plugin', [denial]));
 
-    await expect(authoredJourneys({ WPJ_MANIFEST_DIR: dir }, 'acme'))
+    await expect(manifestPlan({ WPJ_MANIFEST_DIR: dir }, 'acme'))
       .rejects.toThrow(/declares plugin "other-plugin", but the run is against "acme"/);
   });
 
   it('refuses the old variable name rather than silently running without the manifest', async () => {
     const dir = await manifestDir(manifest('acme', [denial]));
 
-    await expect(authoredJourneys({ WPJ_PLUGIN_DIR: dir }, 'acme'))
+    await expect(manifestPlan({ WPJ_PLUGIN_DIR: dir }, 'acme'))
       .rejects.toThrow(/WPJ_PLUGIN_DIR is no longer read.*WPJ_MANIFEST_DIR/);
+  });
+
+  it('refuses an authored name that collides with a core journey\'s, by itself', async () => {
+    const dir = await manifestDir(manifest('acme', [{ ...denial, name: 'lifecycle:acme' }]));
+
+    await expect(manifestPlan({ WPJ_MANIFEST_DIR: dir }, 'acme'))
+      .rejects.toThrow(/duplicate journey name "lifecycle:acme"/);
+  });
+
+  it('refuses that collision BEFORE any wp-cli call touches the site', async () => {
+    // It used to be caught inside coreSuite, after the baseline had already deactivated and
+    // reactivated the plugin under test.
+    const dir = await manifestDir(manifest('acme', [{ ...denial, name: 'frontend-renders' }]));
+    const marker = join(dir, 'wp-cli-ran');
+    const stderr = process.stderr.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try {
+      await expect(main(['run', '--plugin', 'acme'], {
+        WPJ_BASE_URL: 'https://site.test', WPJ_AGENT_SECRET: 'x'.repeat(16),
+        WPJ_WP: `touch ${marker} #`, WPJ_MANIFEST_DIR: dir,
+      })).rejects.toThrow(/duplicate journey name "frontend-renders"/);
+    } finally {
+      process.stderr.write = stderr;
+    }
+
+    await expect(access(marker)).rejects.toThrow();
   });
 });
