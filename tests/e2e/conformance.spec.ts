@@ -51,6 +51,13 @@ const execFileAsync = promisify(execFile);
  */
 const WP_CLI = (process.env.WPJ_WP ?? '').split(' ').filter(Boolean);
 
+/**
+ * Whether BOTH the wp-cli and the base URL name the scratch site. beforeAll asserts it; afterAll
+ * checks it too, because afterAll runs even when beforeAll failed, and its clean-up uninstalls a
+ * plugin through whatever WPJ_WP names (R101).
+ */
+const TARGETS_SCRATCH = WP_CLI.includes(TARGET) && cfg.baseUrl.includes(TARGET);
+
 /** Run wp-cli, failing the test if it fails. */
 async function wp(...args: string[]): Promise<void> {
   const [command, ...prefix] = WP_CLI;
@@ -116,6 +123,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await browser?.close();
+  if (!TARGETS_SCRATCH) return;
   // R31: leave wpjtest as it was found — the fixture inactive, and none of its state behind.
   await wpTolerant('plugin', 'uninstall', PLUGIN, '--deactivate', '--skip-delete');
   await wpTolerant('cron', 'event', 'delete', 'wpj_fixture_daily');

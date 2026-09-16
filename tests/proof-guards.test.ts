@@ -27,4 +27,9 @@ describe('the live proofs (R101)', () => {
     const text = await readFile(join(ROOT, 'scripts', 'prove-login-minting.sh'), 'utf8');
     expect(text).toMatch(/if \[ "\$SKIPPED" -gt 0 \]; then[\s\S]*exit 1/);
   });
+
+  it('never let the e2e clean-up run wp-cli against a target the setup refused', async () => {
+    const text = await readFile(join(ROOT, 'tests', 'e2e', 'conformance.spec.ts'), 'utf8');
+    expect(text).toMatch(/test\.afterAll\(async \(\) => \{[^}]*if \(!TARGETS_SCRATCH\) return;/);
+  });
 });
