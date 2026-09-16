@@ -292,3 +292,29 @@ export function withoutBaselineNoise(
     return true;
   });
 }
+
+/** How much of one subtracted text a note quotes. */
+const NOTE_TEXT_LIMIT = 120;
+
+/**
+ * The row note that says what `withoutBaselineNoise` removed, or `null` when it removed nothing.
+ *
+ * The subtraction is correct and still must not be silent: a plugin making the same core misuse
+ * as the theme has that finding erased, and a row reading `ok` with no trace of it is a false
+ * green in the making. A note never changes the outcome; it makes the discount visible.
+ *
+ * @param before the journey's findings as it reported them
+ * @param after  what `withoutBaselineNoise` kept of them (the same objects)
+ */
+export function baselineNoiseNote(before: readonly Finding[], after: readonly Finding[]): string | null {
+  const kept = new Set(after);
+  const removed = before.filter((finding) => !kept.has(finding));
+  if (removed.length === 0) return null;
+  const texts = [...new Set(removed.map((finding) => finding.text))].map((text) => (
+    text.length > NOTE_TEXT_LIMIT ? `${text.slice(0, NOTE_TEXT_LIMIT)}…` : text
+  ));
+  const counted = removed.length === 1
+    ? '1 finding matched this site\'s baseline noise and was not counted'
+    : `${removed.length} findings matched this site's baseline noise and were not counted`;
+  return `${counted}: ${texts.join('; ')}`;
+}

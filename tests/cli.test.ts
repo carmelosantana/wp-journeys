@@ -440,6 +440,57 @@ describe('runSuite', () => {
     expect(results[0]!.findings).toEqual([]);
   });
 
+  it('SAYS what the noise subtraction removed, on the row, without changing the outcome', async () => {
+    // A plugin making the same core misuse as the theme has that finding erased; the row must
+    // not read as a silent ok.
+    const suite = register(
+      scripted('noisy', async () => resultOf('noisy', {
+        notes: ['its own note'],
+        findings: [{ kind: 'phplog', text: NOISE_TEXT }, { kind: 'phplog', text: NOISE_TEXT }],
+      })),
+    );
+
+    const [result] = await runSuite(suite, nothing, nothing, nothing, BASELINE);
+    const { outcomeOf } = await import('../src/journeys/index.ts');
+
+    expect(outcomeOf(result!)).toBe('pass');
+    expect(result!.notes).toEqual([
+      'its own note',
+      `2 findings matched this site's baseline noise and were not counted: ${NOISE_TEXT}`,
+    ]);
+  });
+
+  it('lists each distinct subtracted text once, truncated, and adds no note when nothing was removed', async () => {
+    const long = `PHP Deprecated: ${'x'.repeat(300)}`;
+    const suite = register(
+      scripted('long', async () => resultOf('long', {
+        findings: [{ kind: 'phplog', text: long }, { kind: 'phplog', text: NOISE_TEXT }],
+      })),
+      scripted('quiet', async () => resultOf('quiet', { findings: [{ kind: 'phplog', text: 'PHP Warning: real' }] })),
+    );
+
+    const [noisy, quiet] = await runSuite(suite, nothing, nothing, nothing, { ...BASELINE, logNoise: [NOISE_TEXT, long] });
+
+    const note = noisy!.notes?.[0] ?? '';
+    expect(note).toMatch(/^2 findings matched this site's baseline noise and were not counted: /);
+    expect(note).toContain(`${long.slice(0, 120)}…`);
+    expect(note).not.toContain(long);
+    expect(note).toContain(NOISE_TEXT);
+    expect(quiet!.notes).toBeUndefined();
+  });
+
+  it('says so in the singular for one subtracted finding, and on a failed row too', async () => {
+    const real = { kind: 'phplog' as const, text: 'PHP Warning: Undefined array key "id"' };
+    const suite = register(
+      scripted('mixed', async () => resultOf('mixed', { findings: [real, { kind: 'phplog', text: NOISE_TEXT }] })),
+    );
+
+    const [result] = await runSuite(suite, nothing, nothing, nothing, BASELINE);
+
+    expect(result!.findings).toEqual([real]);
+    expect(result!.notes).toEqual([`1 finding matched this site's baseline noise and was not counted: ${NOISE_TEXT}`]);
+  });
+
   it('keeps a finding the baseline never saw — that is the plugin under test', async () => {
     const real = { kind: 'phplog' as const, text: 'PHP Warning: Undefined array key "id"' };
     const suite = register(

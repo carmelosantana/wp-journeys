@@ -31,7 +31,7 @@ import { loadManifest } from '../manifest/load.ts';
 import type { Journey, JourneyResult } from '../journeys/index.ts';
 import { exitCodeFor, renderSummary } from '../report/summary.ts';
 import type { Finding } from '../sentinel/phplog.ts';
-import { captureBaseline, withoutBaselineNoise } from '../suite/baseline.ts';
+import { baselineNoiseNote, captureBaseline, withoutBaselineNoise } from '../suite/baseline.ts';
 import type { Baseline } from '../suite/baseline.ts';
 import { conformanceSurface, coreSuite } from '../suite/index.ts';
 import { launchChromium } from './browser.ts';
@@ -298,10 +298,15 @@ export async function runSuite(
     // failed. Both stay at their defaults when it was `run()` itself that threw.
     let raw: JourneyResult | undefined;
     let carried: Finding[] = [];
+    let notes: string[] | undefined;
     try {
       raw = await journey.run(browser, cfg, agent);
       carried = withoutBaselineNoise(raw.findings, baseline);
+      // What the subtraction removed is SAID on the row (never silent), and never changes the outcome.
+      const discounted = baselineNoiseNote(raw.findings, carried);
+      notes = discounted === null ? raw.notes : [...(raw.notes ?? []), discounted];
       const settled: JourneyResult = { ...raw, findings: carried };
+      if (notes !== undefined) settled.notes = notes;
       // Called for its REFUSAL, not its value: this is where a half-declared skip is caught,
       // while it can still be reported as one journey's failure.
       outcomeOf(settled);
@@ -309,7 +314,10 @@ export async function runSuite(
     } catch (error) {
       // A journey that threw may still carry what it observed before it did (a manifest gate's
       // leftover findings): reported, after the same noise subtraction, never dropped.
-      const observed = error instanceof JourneyError ? withoutBaselineNoise(error.findings, baseline) : [];
+      const thrownWith = error instanceof JourneyError ? error.findings : [];
+      const observed = withoutBaselineNoise(thrownWith, baseline);
+      const discounted = baselineNoiseNote(thrownWith, observed);
+      if (discounted !== null) notes = [...(notes ?? raw?.notes ?? []), discounted];
       const failed: JourneyResult = {
         name: journey.name,
         actor: journey.actor,
@@ -319,7 +327,8 @@ export async function runSuite(
         // journey's own message may quote a minted URL.
         findings: [...carried, ...observed, { kind: 'assertion', text: outboundText(messageOf(error), cfg?.secret) }],
       };
-      if (raw?.notes) failed.notes = raw.notes;
+      const failedNotes = notes ?? raw?.notes;
+      if (failedNotes) failed.notes = failedNotes;
       results.push(failed);
     }
   }

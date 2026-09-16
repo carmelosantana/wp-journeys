@@ -55,8 +55,10 @@ provisions each logged-in actor as `wpj_<role>`. Anonymous never logs in.
 | `assertion` | The journey's own check failed: orphans, a failed read-back, a failed gate, or a journey that threw. | Read the sentence. Each one names its likely causes. |
 
 A `·` note line never changes the outcome. It states a condition the outcome rests on: a
-precondition a pass depends on, a check the row could not make, or a finding the row
-discounted because the manifest declared it.
+precondition a pass depends on, a check the row could not make, a finding the row
+discounted because the manifest declared it, or findings that matched the site's own baseline
+noise and were not counted. Read that last one before you call the row clean: a plugin that
+makes the same mistake as the theme is hidden by it.
 
 ## Rules for reporting a run to a human
 
