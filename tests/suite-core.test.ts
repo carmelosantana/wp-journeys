@@ -5,7 +5,7 @@ import { surfaceDelta } from '../src/discovery/surface.ts';
 import { outcomeOf } from '../src/journeys/index.ts';
 import { accessMatrix } from '../src/suite/admin-access-matrix.ts';
 import { conformanceSurface, coreSuite } from '../src/suite/index.ts';
-import { adminSweep, shortcodeRender } from '../src/suite/rendered-surface.ts';
+import { adminSweep, shortcodeRender, sweepPlan } from '../src/suite/rendered-surface.ts';
 import type { Surface } from '../src/discovery/types.ts';
 
 const delta: Surface = {
@@ -89,6 +89,47 @@ describe('conformanceSurface', () => {
 
     const corrected = accessMatrix(conformanceSurface(before, after), [Actor.ADMINISTRATOR]);
     expect(corrected[0]?.denyExpected).toBe(false);
+  });
+});
+
+describe('sweepPlan', () => {
+  const CONTROL = '/wp-admin/profile.php';
+  const screensOf = (plan: ReadonlyArray<{ url: string }>) => plan.filter((s) => s.url !== CONTROL);
+
+  it('opens an authenticated sweep with a control visit no anonymous session could pass (R54)', () => {
+    // A sweep whose login was silently refused runs as an anonymous visitor — and every denial
+    // it expects is then satisfied by WordPress's login redirect, so it goes green having
+    // proved nothing. One screen every logged-in role can reach, asserted as ALLOWED, is what
+    // makes a secretly-anonymous sweep impossible to pass.
+    expect(sweepPlan(delta, Actor.SUBSCRIBER)[0]).toEqual({ url: CONTROL, denyExpected: false });
+  });
+
+  it('gives the anonymous actor no control visit, because it has no session to prove', () => {
+    expect(sweepPlan(delta, Actor.ANONYMOUS).some((step) => step.url === CONTROL)).toBe(false);
+  });
+
+  it('carries the matrix’s verdict for each screen', () => {
+    expect(screensOf(sweepPlan(delta, Actor.SUBSCRIBER))).toEqual([
+      { url: '/wp-admin/admin.php?page=acme', denyExpected: true },
+      { url: '/wp-admin/admin.php?page=acme-public', denyExpected: false },
+    ]);
+  });
+
+  it('asserts one URL once, however many screens WordPress links there (R56)', () => {
+    // A promoted container and its first submenu are two screens at ONE url. Visiting it twice
+    // asserts nothing extra, and if their capabilities ever disagreed the second expectation
+    // would be a guaranteed false defect against the plugin under test.
+    const shared: Surface = {
+      ...delta,
+      screens: [
+        { slug: 'acme-container', url: '/wp-admin/admin.php?page=acme-home', capability: 'read', title: 'Acme', parent: null },
+        { slug: 'acme-home', url: '/wp-admin/admin.php?page=acme-home', capability: 'read', title: 'Home', parent: 'acme-container' },
+      ],
+    };
+
+    expect(screensOf(sweepPlan(shared, Actor.SUBSCRIBER))).toEqual([
+      { url: '/wp-admin/admin.php?page=acme-home', denyExpected: false },
+    ]);
   });
 });
 
