@@ -13,6 +13,7 @@ import type { RawRegistries } from '../src/discovery/types.ts';
 import type { Journey, JourneyResult } from '../src/journeys/index.ts';
 import { main, manifestPlan, parseArgs, prepareSuite, runSuite, siteActions, suiteShape, wpCommands } from '../src/runner/cli.ts';
 import type { Baseline } from '../src/suite/baseline.ts';
+import { SPAWN_TIMEOUT_MS } from './helpers/timeouts.ts';
 
 /** A per-request deprecation this site writes whatever is under test (R45). */
 const NOISE_TEXT = 'PHP Deprecated: Creation of dynamic property Acme::$x is deprecated';
@@ -97,7 +98,7 @@ describe('parseArgs', () => {
   });
 });
 
-describe('the wpj entry point', () => {
+describe('the wpj entry point', { timeout: SPAWN_TIMEOUT_MS }, () => {
   const wpj = fileURLToPath(new URL('../bin/wpj.js', import.meta.url));
 
   /** Run the real binary. With no valid command it exits before touching config or the site. */
@@ -156,7 +157,7 @@ describe('the wpj entry point', () => {
   });
 });
 
-describe('wpj mcp (R90)', () => {
+describe('wpj mcp (R90)', { timeout: SPAWN_TIMEOUT_MS }, () => {
   const wpj = fileURLToPath(new URL('../bin/wpj.js', import.meta.url));
 
   it('answers the brief\'s tools/list handshake with only JSON-RPC on stdout, even with no configuration', () => {

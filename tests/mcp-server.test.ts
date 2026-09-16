@@ -14,6 +14,7 @@ import type { AgentClient, LogDelta } from '../src/agent/client.ts';
 import type { RawRegistries } from '../src/discovery/types.ts';
 import { PROTOCOL_VERSION, createMcpServer, serve, type McpDeps, type Rpc } from '../src/mcp/server.ts';
 import { TOOLS, describeTools } from '../src/mcp/tools.ts';
+import { SPAWN_TIMEOUT_MS } from './helpers/timeouts.ts';
 import { CLEAN, FakeBrowser, FakePage, fakeAgent, landsOn, response } from './helpers/fakes.ts';
 
 /** A test value standing in for the shared secret. Nothing real. */
@@ -166,7 +167,7 @@ describe('the protocol (R91)', () => {
   });
 });
 
-describe('stdout belongs to the protocol, whatever a tool\'s code prints (I1, R90)', () => {
+describe('stdout belongs to the protocol, whatever a tool\'s code prints (I1, R90)', { timeout: SPAWN_TIMEOUT_MS }, () => {
   it('diverts console and direct stdout writes to stderr while serving on process.stdout', () => {
     const fixture = fileURLToPath(new URL('./fixtures/mcp-noisy-server.ts', import.meta.url));
     const result = spawnSync(process.execPath, [fixture], {
