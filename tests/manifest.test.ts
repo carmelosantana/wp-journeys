@@ -9,7 +9,7 @@ import { CONTROL_SCREEN } from '../src/journeys/support.ts';
 import { interpret } from '../src/manifest/interpret.ts';
 import { loadManifest } from '../src/manifest/load.ts';
 import { parseManifest } from '../src/manifest/schema.ts';
-import { CFG, FakeBrowser, FakePage, fakeAgent, landsOn } from './helpers/fakes.ts';
+import { CFG, FakeBrowser, FakePage, fakeAgent, landsOn, response } from './helpers/fakes.ts';
 
 const valid = {
   version: 1,
@@ -233,11 +233,11 @@ describe('interpret', () => {
   });
 
   /** A single-journey manifest, parsed and interpreted, with the fakes to run it against. */
-  function arrange(journey: Record<string, unknown>, pluginDir?: string) {
+  function arrange(journey: Record<string, unknown>, pluginDir?: string, nonce?: () => string) {
     const page = new FakePage();
     const browser = new FakeBrowser(page);
     const { agent, calls } = fakeAgent();
-    const [run] = interpret(parseManifest(withJourney(journey), 'f.json'), pluginDir);
+    const [run] = interpret(parseManifest(withJourney(journey), 'f.json'), pluginDir, nonce);
     if (!run) throw new Error('interpret produced no journey');
     return { page, browser, agent, calls, run: () => run.run(browser.asBrowser(), CFG, agent) };
   }
@@ -357,34 +357,91 @@ describe('interpret', () => {
   describe('settings', () => {
     const setting = { url: SCREEN, field: '#acme_title', value: 'Hello from wp-journeys', readBack: '/' };
     const journey = { name: 's', actor: 'administrator', surface: 'both', settings: [setting] };
+    const nonce = () => 'wpj-fixed';
+    const WRITTEN = 'Hello from wp-journeys wpj-fixed';
 
-    it('writes the field, submits once, and passes when the value reads back on the frontend', async () => {
-      const { page, run } = arrange(journey);
-      page.navigations = [ADMIN_LANDING, CONTROL];
-      page.body = '<html><body><h1>Hello from wp-journeys</h1></body></html>';
+    it('writes the value plus a nonce, submits once, and passes only when the visible text CHANGED (R66)', async () => {
+      // Absent before the write, present after: change detection. A state check alone passes
+      // on every run after the first, whether or not the submit still works.
+      const { page, run } = arrange(journey, undefined, nonce);
+      page.navigations = [
+        ADMIN_LANDING, CONTROL,
+        landsOn('https://s.test/'), landsOn(`https://s.test${SCREEN}`),
+        (url) => { page.text = `Site title: ${WRITTEN}`; return response(200, url); },
+      ];
 
       const result = await run();
 
       expect(result.findings).toEqual([]);
-      expect(result.entitiesCreated).toBe(1);
-      expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, SCREEN, '/']);
-      expect(page.fills).toEqual([['#acme_title', 'Hello from wp-journeys']]);
+      expect(result.entitiesCreated).toBe(0);
+      expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, '/', SCREEN, '/']);
+      expect(page.fills).toEqual([['#acme_title', WRITTEN]]);
       expect(page.keys).toEqual(['Enter']);
     });
 
     it('fails when the save answered cleanly but the value never reached the read-back URL', async () => {
-      // A validation or capability failure redirects back to the form with a 2xx. Only the
-      // read-back can tell that from success.
-      const { page, run } = arrange(journey);
+      // A validation or capability failure redirects back to the form with a 2xx; so does a
+      // submit that never happened. Only the read-back can tell either from success.
+      const { page, run } = arrange(journey, undefined, nonce);
       page.navigations = [ADMIN_LANDING, CONTROL];
 
       const result = await run();
 
       expect(result.findings).toMatchObject([{
         kind: 'assertion',
-        text: expect.stringContaining('read-back failed for "s": wrote "Hello from wp-journeys" to #acme_title'),
+        text: expect.stringContaining(`read-back failed for "s": wrote ${JSON.stringify(WRITTEN)} to #acme_title`),
       }]);
       expect(result.findings[0]?.text).toContain('never appeared at /');
+      expect(result.findings[0]?.text).toContain('Enter');
+    });
+
+    it('fails, without writing, when what it is about to write is ALREADY visible (R66)', async () => {
+      // Nothing can then be proven by its appearance afterwards — and a matcher that finds
+      // everything would show up here first.
+      const { page, run } = arrange(journey, undefined, nonce);
+      page.navigations = [ADMIN_LANDING, CONTROL];
+      page.text = `already: ${WRITTEN}`;
+
+      const result = await run();
+
+      expect(result.findings).toMatchObject([{
+        kind: 'assertion',
+        text: expect.stringContaining(`${JSON.stringify(WRITTEN)} was already visible at / before it was written`),
+      }]);
+      expect(page.fills).toEqual([]);
+      expect(page.gotos).toEqual([MINT, CONTROL_SCREEN, '/']);
+    });
+
+    it('matches the visible text, not the HTML source (R66)', async () => {
+      // Class names, script bodies, comments and head metadata are not the setting. A value in
+      // the source but not the rendered text must not read back.
+      const { page, run } = arrange(journey, undefined, nonce);
+      page.navigations = [ADMIN_LANDING, CONTROL];
+      page.body = `<html><head><title>${WRITTEN}</title></head><body><!-- ${WRITTEN} --><p>ok</p></body></html>`;
+
+      const result = await run();
+
+      expect(result.findings).toMatchObject([{ kind: 'assertion', text: expect.stringContaining('read-back failed') }]);
+    });
+
+    it('draws a fresh nonce for every write by default, so no earlier write can satisfy a later read-back', async () => {
+      const two = {
+        name: 'two', actor: 'administrator', surface: 'both',
+        settings: [setting, { ...setting, field: '#acme_tagline' }],
+      };
+      const { page, run } = arrange(two);
+      // The frontend shows everything written so far, like a real site.
+      const persist = (url: string) => { page.text = page.fills.map(([, value]) => value).join(' '); return response(200, url); };
+      page.navigations = [ADMIN_LANDING, CONTROL, persist, persist, persist, persist, persist, persist];
+
+      const result = await run();
+
+      expect(result.findings).toEqual([]);
+      const written = page.fills.map(([, value]) => value);
+      expect(written).toHaveLength(2);
+      expect(written[0]).toMatch(/^Hello from wp-journeys wpj-[0-9a-f]{8}$/);
+      expect(written[1]).toMatch(/^Hello from wp-journeys wpj-[0-9a-f]{8}$/);
+      expect(written[0]).not.toBe(written[1]);
     });
   });
 

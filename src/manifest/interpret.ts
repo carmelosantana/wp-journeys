@@ -8,10 +8,12 @@
  *  - a screen names this journey's actor in `allow` or `deny`, and `visit()` asserts the
  *    document's status against that expectation — declared per visit, since the sentinel's
  *    expectation is one-shot and a leaked denial would accept a login bounce on the next screen;
- *  - a settings entry is a READ-BACK: write the field, then load the frontend URL and prove the
- *    value actually arrived. A 2xx on the save is never accepted as evidence — a WordPress
- *    validation or capability failure answers with a redirect back to the form, not a 5xx, and
- *    would otherwise look exactly like success;
+ *  - a settings entry is a READ-BACK that detects CHANGE (R66): the value, suffixed per write,
+ *    must be absent from the frontend URL's visible text before the write and present after.
+ *    A 2xx on the save is never accepted as evidence — a WordPress validation or capability
+ *    failure answers with a redirect back to the form, not a 5xx, and would otherwise look
+ *    exactly like success; and a post-state check alone would pass on every run after the
+ *    first, whether or not the submit still worked;
  *  - a shortcode is proven to have rendered THROUGH the agent and to have expanded, by the same
  *    check the discovered-surface journey uses (R5).
  *
@@ -19,8 +21,11 @@
  * precedes every step (R67), so a manifest denial for a logged-in actor cannot be satisfied by
  * an anonymous visitor: a refused, bounced or sessionless login fails before the first screen.
  */
+import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import type { Page } from '@playwright/test';
 
 import { isAnonymous } from '../actors/roles.ts';
 import { messageOf } from '../errors.ts';
@@ -48,7 +53,21 @@ async function loadModule(entry: ManifestJourney, module: string, pluginDir: str
   return journey as Journey;
 }
 
-function journeyFor(entry: ManifestJourney, pluginDir: string): Journey {
+/** A suffix no earlier run, and no earlier write in this run, can have left on the site. */
+function freshNonce(): string {
+  return `wpj-${randomBytes(4).toString('hex')}`;
+}
+
+/**
+ * The body's VISIBLE text, which is what a setting reaches. Matching the raw HTML source
+ * instead would let a short or common value — "1", "Home", the plugin's own name — read back
+ * out of a class name, a script body, a comment or the head, regardless of the setting.
+ */
+function visibleText(page: Page): Promise<string> {
+  return page.locator('body').innerText();
+}
+
+function journeyFor(entry: ManifestJourney, pluginDir: string, nonce: () => string): Journey {
   return {
     name: entry.name,
     actor: entry.actor,
@@ -59,8 +78,6 @@ function journeyFor(entry: ManifestJourney, pluginDir: string): Journey {
         return loaded.run(browser, cfg, agent);
       }
       return runAsActor(browser, cfg, agent, entry.name, entry.actor, entry.surface, async (page, sentinel) => {
-        let created = 0;
-
         // The control visit (R67): one screen this actor MUST be served, before any step. A
         // deny-only journey would otherwise be satisfied by the login bounce even when the mint
         // redirected away without a session — and the shipped example is deny-only.
@@ -76,21 +93,35 @@ function journeyFor(entry: ManifestJourney, pluginDir: string): Journey {
         }
 
         for (const setting of entry.settings ?? []) {
+          // A fresh suffix per write (R66), so the read-back proves THIS run's write and not a
+          // value the site has held since the first successful run — after which a submit that
+          // silently stopped working would stay green forever.
+          const written = `${setting.value} ${nonce()}`;
+
+          // Absent BEFORE the write. Change detection, not a state check; and the place a
+          // matcher that finds everything would show itself first.
+          await sentinel.visit(page, setting.readBack);
+          if (await visibleText(page).then((text) => text.includes(written))) {
+            throw new Error(
+              `read-back for "${entry.name}": ${JSON.stringify(written)} was already visible at ${setting.readBack} `
+                + 'before it was written — its appearance afterwards could prove nothing, so the write was not made',
+            );
+          }
+
           await sentinel.visit(page, setting.url);
-          await page.fill(setting.field, setting.value);
+          await page.fill(setting.field, written);
           // The submit is NEVER retried — a retried submit writes twice.
           await page.keyboard.press('Enter');
           await page.waitForLoadState('networkidle');
-          created += 1;
 
-          // The read-back. This is the assertion the whole entry exists for.
+          // Present AFTER. This is the assertion the whole entry exists for.
           await sentinel.visit(page, setting.readBack);
-          const body = await page.content();
-          if (!body.includes(setting.value)) {
+          if (!(await visibleText(page)).includes(written)) {
             throw new Error(
-              `read-back failed for "${entry.name}": wrote ${JSON.stringify(setting.value)} to ${setting.field} `
-                + `on ${setting.url}, but it never appeared at ${setting.readBack}. `
-                + 'The save answered without an error, which is exactly how a validation or capability failure looks.',
+              `read-back failed for "${entry.name}": wrote ${JSON.stringify(written)} to ${setting.field} `
+                + `on ${setting.url}, but it never appeared at ${setting.readBack}. Either the save was refused — a `
+                + 'validation or capability failure answers with a redirect back to the form, not an error — or the '
+                + 'submit never happened: Enter submits an <input> inside a <form>, not a <textarea> or a field without one.',
             );
           }
         }
@@ -101,12 +132,18 @@ function journeyFor(entry: ManifestJourney, pluginDir: string): Journey {
           if (defect) throw new Error(defect);
         }
 
-        return created;
+        // A settings save creates no entity; a manifest journey is read-only by construction.
+        return 0;
       });
     },
   };
 }
 
-export function interpret(manifest: Manifest, pluginDir = '.'): Journey[] {
-  return manifest.journeys.map((entry) => journeyFor(entry, pluginDir));
+/**
+ * `nonce` is drawn inside `run`, once per settings write, so `interpret` itself stays pure and
+ * deterministic; it is a parameter only so a test can pin the suffix and assert the exact
+ * value written.
+ */
+export function interpret(manifest: Manifest, pluginDir = '.', nonce: () => string = freshNonce): Journey[] {
+  return manifest.journeys.map((entry) => journeyFor(entry, pluginDir, nonce));
 }

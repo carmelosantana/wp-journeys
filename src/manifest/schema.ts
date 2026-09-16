@@ -23,8 +23,12 @@ export interface ManifestSetting {
   url: string;
   /** A CSS selector for the input to write. */
   field: string;
+  /**
+   * What to write. The interpreter appends a per-write suffix (`wpj-<8 hex>`), so the field
+   * must accept the value plus nine characters, and the read-back proves THIS run's write.
+   */
   value: string;
-  /** A frontend URL where the written value must appear — the read-back. */
+  /** A frontend URL where the written value must be absent before, and visible after. */
   readBack: string;
 }
 

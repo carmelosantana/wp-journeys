@@ -30,6 +30,8 @@ export class FakePage {
   /** What each successive goto does; a 200 on the requested URL once the queue runs out. */
   navigations: Array<(url: string) => unknown> = [];
   body = '<html><body>ok</body></html>';
+  /** The body's VISIBLE text, as `locator('body').innerText()` reads it — never the source. */
+  text = 'ok';
   /** Every `fill(selector, value)` the journey made, in order. */
   readonly fills: Array<[string, string]> = [];
   /** Every key the journey pressed, in order. */
@@ -67,6 +69,10 @@ export class FakePage {
 
   async fill(selector: string, value: string): Promise<void> {
     this.fills.push([selector, value]);
+  }
+
+  locator(_selector: string): { innerText: () => Promise<string> } {
+    return { innerText: async () => this.text };
   }
 
   async waitForLoadState(): Promise<void> {}
