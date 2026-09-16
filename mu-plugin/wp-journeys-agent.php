@@ -71,7 +71,7 @@ function wpj_agent_dispatch($request) {
                 'debugLog' => defined('WP_DEBUG_LOG') && WP_DEBUG_LOG,
             );
         case 'snapshot':
-            return wpj_snapshot();
+            return wpj_snapshot((string) wpj_agent_arg($request, 'plugin', ''));
         case 'logDelta':
             return wpj_log_delta($request->get_param('args')['offset'] ?? 0);
         case 'ensureActor':

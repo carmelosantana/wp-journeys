@@ -25,14 +25,62 @@ wpj_assert(
 wpj_assert('an empty cron array has no hooks', array(), wpj_snapshot_cron_hooks(array()));
 wpj_assert('a missing cron option (false) has no hooks, not a warning', array(), wpj_snapshot_cron_hooks(false));
 
-// The origin re-check: which scheduled hooks some loaded code still answers. Asked of an
-// injected predicate so this stays pure; the live call passes has_action.
-$handled = function ($hook) { return $hook === 'wp_version_check'; };
-wpj_assert(
-    'keeps only the hooks the predicate says are handled, in order',
-    array('wp_version_check'),
-    wpj_snapshot_handled_hooks(array('acme_daily', 'acme_sync', 'wp_version_check'), $handled)
+// R79: the origin re-check. A hook is core's only when EVERY callback on it is DEFINED under
+// wp-includes or wp-admin. has_action() alone asked whether anything at all answered, and a
+// plugin's leftover mu-plugin answers its own orphaned hook.
+$fake = __DIR__ . '/fixtures/fakewp';
+$core_closure = require $fake . '/wp-includes/core-callbacks.php';
+require $fake . '/wp-admin/admin-callbacks.php';
+$left_closure = require $fake . '/wp-content/mu-plugins/leftover.php';
+$core_dirs = array($fake . '/wp-includes', $fake . '/wp-admin');
+
+$in_core = array(
+    'a function-name string' => 'wpj_t_core_fn',
+    'a Class::method string' => 'WPJ_T_Core::stat',
+    'a [class, method] array' => array('WPJ_T_Core', 'stat'),
+    'an [object, method] array' => array(new WPJ_T_Core(), 'inst'),
+    'a closure' => $core_closure,
+    'an invokable object' => new WPJ_T_Core(),
+    'a wp-admin function' => 'wpj_t_admin_fn',
 );
-wpj_assert('no hooks, none handled', array(), wpj_snapshot_handled_hooks(array(), $handled));
+foreach ($in_core as $shape => $callback) {
+    wpj_assert("resolves $shape defined in core", true, wpj_callback_is_core($callback, $core_dirs));
+}
+$outside = array(
+    'a function-name string' => 'wpj_t_leftover_fn',
+    'a Class::method string' => 'WPJ_T_Leftover::stat',
+    'a [class, method] array' => array('WPJ_T_Leftover', 'stat'),
+    'an [object, method] array' => array(new WPJ_T_Leftover(), 'inst'),
+    'a closure' => $left_closure,
+    'an invokable object' => new WPJ_T_Leftover(),
+);
+foreach ($outside as $shape => $callback) {
+    wpj_assert("does not count $shape defined outside core", false, wpj_callback_is_core($callback, $core_dirs));
+}
+// Uncertainty reports, never hides.
+wpj_assert('an unknown function is not core', false, wpj_callback_is_core('wpj_t_no_such_function', $core_dirs));
+wpj_assert('an unknown method is not core', false, wpj_callback_is_core(array('WPJ_T_Core', 'nope'), $core_dirs));
+wpj_assert('a PHP built-in has no file, so is not core', false, wpj_callback_is_core('strlen', $core_dirs));
+wpj_assert('a non-callable shape is not core', false, wpj_callback_is_core(42, $core_dirs));
+wpj_assert('a sibling directory sharing the prefix is not core', false,
+    wpj_callback_is_core('wpj_t_core_fn', array($fake . '/wp-incl')));
+
+$by_hook = array(
+    'core_only' => array('wpj_t_core_fn', array('WPJ_T_Core', 'stat')),
+    'leftover' => array('wpj_t_leftover_fn'),
+    'mixed' => array('wpj_t_core_fn', 'wpj_t_leftover_fn'),
+);
+wpj_assert(
+    'only a hook whose every callback is core is core; mixed and leftover are not; unhandled is not',
+    array('core_only'),
+    wpj_snapshot_core_hooks(array('core_only', 'leftover', 'mixed', 'unhandled'), $by_hook, $core_dirs)
+);
+
+// Whether the plugin under test is still active, by slug, from active_plugins.
+wpj_assert('a directory plugin is active', true, wpj_plugin_slug_active('acme', array('other/other.php', 'acme/acme.php')));
+wpj_assert('a single-file plugin is active', true, wpj_plugin_slug_active('hello', array('hello.php')));
+wpj_assert('a slug that only prefixes another is not active', false, wpj_plugin_slug_active('acme', array('acme-pro/acme-pro.php')));
+wpj_assert('an absent plugin is not active', false, wpj_plugin_slug_active('acme', array()));
+wpj_assert('a non-array option is read as nothing active', false, wpj_plugin_slug_active('acme', false));
 
 wpj_assert_exit();

@@ -11,14 +11,19 @@ export interface Snapshot {
   cron: string[];
   userMeta: string[];
   /**
-   * The `cron` hooks some code loaded at snapshot time still answers (`has_action`). Optional
-   * because an older agent does not send it; absent means "unknown", and nothing is excluded.
+   * The `cron` hooks whose EVERY callback is defined in core (wp-includes, wp-admin) — R79.
+   * Optional because an older agent does not send it; absent means "unknown", excluding nothing.
    */
-  cronHandled?: string[];
+  cronCore?: string[];
+  /**
+   * Whether the plugin the snapshot was asked about is in active_plugins. Only present when the
+   * snapshot was asked about one; absent is "unknown", never "inactive".
+   */
+  pluginActive?: boolean;
 }
 
 /** What survived an uninstall that should not have. */
-export type Orphans = Omit<Snapshot, 'cronHandled'>;
+export type Orphans = Omit<Snapshot, 'cronCore' | 'pluginActive'>;
 
 /**
  * Transients are WordPress's own cache, created and expired by core and by unrelated code
@@ -30,7 +35,7 @@ function isTransient(option: string): boolean {
 }
 
 export function orphansAfterUninstall(before: Snapshot, after: Snapshot): Orphans {
-  const handled = new Set(after.cronHandled ?? []);
+  const core = new Set(after.cronCore ?? []);
   const added = (was: string[], now: string[]): string[] => {
     const had = new Set(was);
     return now.filter((name) => !had.has(name));
@@ -39,11 +44,10 @@ export function orphansAfterUninstall(before: Snapshot, after: Snapshot): Orphan
   return {
     options: added(before.options, after.options).filter((o) => !isTransient(o)),
     tables: added(before.tables, after.tables),
-    // A new hook that still has a callback AFTER the uninstall is not this plugin's: the plugin
-    // is no longer loaded, so the callback is core's or another active plugin's. Core schedules
-    // some of its own events lazily (wp_delete_temp_updater_backups, observed on wpjtest), and a
-    // baseline taken before that write would otherwise blame it on whatever was under test.
-    cron: added(before.cron, after.cron).filter((hook) => !handled.has(hook)),
+    // A new hook that ONLY core answers is core's own lazy write (wp_delete_temp_updater_backups,
+    // observed on wpjtest), not this plugin's orphan. "Only core", not "anything" (R79): a plugin
+    // that leaves an mu-plugin or drop-in behind still answers its own orphaned hook.
+    cron: added(before.cron, after.cron).filter((hook) => !core.has(hook)),
     userMeta: added(before.userMeta, after.userMeta),
   };
 }

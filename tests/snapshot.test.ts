@@ -49,29 +49,31 @@ describe('orphansAfterUninstall', () => {
     expect(orphansAfterUninstall(before, after).options).toEqual([]);
   });
 
-  describe('a cron hook scheduled lazily by code that is still loaded (Task 11/12 carry-forward)', () => {
+  describe('a cron hook scheduled lazily by CORE (R79: origin, not mere existence)', () => {
     // Observed on wpjtest: core schedules wp_delete_temp_updater_backups lazily, so a run whose
-    // baseline predates that write blamed it on the plugin under test. After the uninstall the
-    // plugin is not loaded, so a hook that still has a callback belongs to core or another
-    // active plugin — never to the plugin under test.
+    // baseline predates that write blamed it on the plugin under test. The agent reports the
+    // hooks whose EVERY callback is defined under wp-includes or wp-admin; only those are core's.
     const after: Snapshot = {
       ...before,
-      cron: ['wp_version_check', 'wp_delete_temp_updater_backups', 'acme_daily_sync'],
-      cronHandled: ['wp_version_check', 'wp_delete_temp_updater_backups'],
+      cron: ['wp_version_check', 'wp_delete_temp_updater_backups', 'acme_daily_sync', 'acme_leftover'],
+      cronCore: ['wp_version_check', 'wp_delete_temp_updater_backups'],
     };
 
-    it('is not the plugin\'s orphan when a callback still answers it after the uninstall', () => {
-      expect(orphansAfterUninstall(before, after).cron).toEqual(['acme_daily_sync']);
+    it('is not the plugin\'s orphan when only core code answers it', () => {
+      expect(orphansAfterUninstall(before, after).cron).toEqual(['acme_daily_sync', 'acme_leftover']);
     });
 
-    it('still reports an added hook nothing answers — the uninstalled plugin was its only handler', () => {
-      expect(hasOrphans(orphansAfterUninstall(before, after))).toBe(true);
+    it('still reports a hook that non-core code answers — a leftover mu-plugin handling its own orphan', () => {
+      // acme_leftover HAS a callback (the plugin's left-behind code), but it is not core's, so
+      // it is not in cronCore. The old existence check dropped it and lifecycle went green.
+      const withLeftover: Snapshot = { ...after, cronHandled: ['acme_leftover'] } as Snapshot;
+      expect(orphansAfterUninstall(before, withLeftover).cron).toContain('acme_leftover');
     });
 
-    it('excludes nothing when the agent did not say which hooks are handled — failing loud, not quiet', () => {
-      const { cronHandled: _unused, ...unsaid } = after;
+    it('excludes nothing when the agent did not say which hooks are core — failing loud, not quiet', () => {
+      const { cronCore: _unused, ...unsaid } = after;
       expect(orphansAfterUninstall(before, unsaid).cron)
-        .toEqual(['wp_delete_temp_updater_backups', 'acme_daily_sync']);
+        .toEqual(['wp_delete_temp_updater_backups', 'acme_daily_sync', 'acme_leftover']);
     });
   });
 });

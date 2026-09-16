@@ -112,6 +112,14 @@ describe('createAgentClient', () => {
     expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({ action: 'snapshot', args: {} });
   });
 
+  it('asks the snapshot about the plugin under test when given its slug (R79)', async () => {
+    const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, { pluginActive: false }));
+
+    await client.snapshot('acme');
+
+    expect(JSON.parse(String(fakeFetch.lastInit?.body))).toEqual({ action: 'snapshot', args: { plugin: 'acme' } });
+  });
+
   it('reads the debug.log delta through the REST route, sending the offset', async () => {
     const delta = { offset: 512, lines: ['[15-Sep-2026 22:40:00 UTC] PHP Notice:  x in /x.php on line 1'], available: true };
     const client = createAgentClient('https://wpjtest.wp.test', 's3cret', fakeFetch(200, delta));

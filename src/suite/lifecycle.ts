@@ -45,7 +45,15 @@ export function lifecycle(plugin: string, baseline: Baseline, uninstall: () => P
         // suppress it — the noise is self-inflicted and unavoidable here.
         await uninstall();
 
-        const after = await agent.snapshot();
+        const after = await agent.snapshot(plugin);
+        // The orphan diff below assumes the plugin is GONE: its code no longer loaded, so a
+        // hook it still answers is not mistaken for core's. Unknown is not gone.
+        if (after.pluginActive === undefined) {
+          throw new Error(`the agent could not say whether ${plugin} is still active after the uninstall — the orphan check cannot be trusted`);
+        }
+        if (after.pluginActive) {
+          throw new Error(`${plugin} is still active after the uninstall — it was never removed, so nothing about its leftovers was checked`);
+        }
         const orphans = orphansAfterUninstall(baseline.snapshot, after);
         if (hasOrphans(orphans)) {
           // Thrown, not pushed: `runAsActor` records a thrown body as an `assertion` finding

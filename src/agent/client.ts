@@ -34,7 +34,11 @@ export interface LogDelta {
 export interface AgentClient {
   status(): Promise<AgentStatus>;
   discover(): Promise<RawRegistries>;
-  snapshot(): Promise<Snapshot>;
+  /**
+   * Name-only state. Given the plugin under test's slug, it also says whether that plugin is
+   * active (`pluginActive`).
+   */
+  snapshot(plugin?: string): Promise<Snapshot>;
   /** The delta since `offset`, or with `'end'` a size-only baseline that returns no lines. */
   logDelta(offset: number | 'end'): Promise<LogDelta>;
   /**
@@ -132,7 +136,7 @@ export function createAgentClient(
   return {
     status: () => call<AgentStatus>('status'),
     discover: () => post<RawRegistries>(discoverEndpoint, {}, 'discover'),
-    snapshot: () => call<Snapshot>('snapshot'),
+    snapshot: (plugin?: string) => call<Snapshot>('snapshot', plugin === undefined ? {} : { plugin }),
     logDelta: async (offset: number | 'end') => {
       // JSON sends NaN and Infinity as null and PHP clamps a negative to 0: either would read
       // the whole log as one delta, so refuse before the request.
