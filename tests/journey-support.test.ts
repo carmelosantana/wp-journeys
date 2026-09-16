@@ -11,6 +11,7 @@ import { Actor } from '../src/actors/roles.ts';
 import type { AgentClient, LogDelta } from '../src/agent/client.ts';
 import type { Config } from '../src/config.ts';
 import { runAsActor } from '../src/journeys/support.ts';
+import type { Sentinel } from '../src/sentinel/sentinel.ts';
 
 const CFG: Config = { baseUrl: 'https://s.test/', secret: 'x'.repeat(16) };
 
@@ -210,6 +211,27 @@ describe('runAsActor', () => {
     });
   });
 
+  it('runs the body when a VALID session landed somewhere other than wp-admin (R52)', async () => {
+    // Real sites bounce low-privilege roles straight back out of wp-admin — WooCommerce's
+    // wc_prevent_admin_access sends a subscriber to My Account, and hiding the dashboard from
+    // non-admins is a common pattern. The session is real; only the landing is elsewhere.
+    // Reading that as a failed login skips the body and reports a false red, and the denial
+    // journeys this suite is built on are exactly where it bites.
+    const page = new FakePage();
+    const browser = new FakeBrowser(page);
+    const { agent } = fakeAgent();
+    page.navigations = [landsOn('https://s.test/my-account/')];
+    let bodyRan = false;
+
+    const result = await runAsActor(
+      browser.asBrowser(), CFG, agent, 'admin-sweep', Actor.SUBSCRIBER, 'admin',
+      async () => { bodyRan = true; return 0; },
+    );
+
+    expect(bodyRan).toBe(true);
+    expect(result.findings).toEqual([]);
+  });
+
   it('skips the body when the mint itself failed to serve, not only when it bounced to login', async () => {
     // A 502 on the mint URL leaves the page ON the mint URL: not the login page, and not a
     // session either. Checking only for wp-login.php would let the body run unauthenticated.
@@ -312,7 +334,7 @@ describe('runAsActor', () => {
     const page = new FakePage();
     const browser = new FakeBrowser(page);
     const { agent, calls } = fakeAgent();
-    const body = async (target: Page, sentinel: { visit(p: Page, u: string): Promise<void> }) => {
+    const body = async (target: Page, sentinel: Sentinel) => {
       await sentinel.visit(target, '/wp-admin/');
       return 0;
     };

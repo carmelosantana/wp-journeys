@@ -39,8 +39,15 @@ export interface Sentinel {
    * `page.goto` — a bare goto asserts nothing about the status, and a 502 error page reads
    * as perfectly good content. It also scans the body it landed on, so the scan covers the
    * whole journey rather than only the screen showing at `drain()` time.
+   *
+   * Returns the NAVIGATION's own verdict: the findings this document's status produced, empty
+   * when it was what the journey expected. They are recorded either way — the return value
+   * only lets a caller act on them, which the login step must (R52): it has to know whether a
+   * session was established before it runs a body that assumes one. It is deliberately not the
+   * whole finding list; a PHP notice on the screen is a defect to report, not a reason to
+   * abandon the journey.
    */
-  visit(page: Page, url: string): Promise<void>;
+  visit(page: Page, url: string): Promise<Finding[]>;
   /** Collect everything observed so far, including the PHP log delta. */
   drain(): Promise<Finding[]>;
 }
@@ -261,7 +268,7 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
      * running wp-cli mid-run. INPUT is never retried anywhere in this codebase: a retried
      * click double-submits, which is a data bug wearing a flake's clothes.
      */
-    async visit(target: Page, url: string): Promise<void> {
+    async visit(target: Page, url: string): Promise<Finding[]> {
       if (target !== page) {
         throw new Error(
           'sentinel.visit() was given a page other than the one the sentinel was installed on — '
@@ -300,13 +307,14 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
         // nothing here would let the journey continue against an unknown document.
         // Built from the REQUESTED url, which at the login step IS the token URL (R51).
         const safe = redactLoginToken(url);
-        findings.push({
+        const unread: Finding = {
           kind: 'response', url: safe,
           text: `navigation to ${safe} produced no response to assert — the document's status could not be read`,
-        });
+        };
+        findings.push(unread);
         // No document arrived, so there is nothing to settle or scan: waiting for networkidle
         // would only burn the full Playwright timeout before failing.
-        return;
+        return [unread];
       }
 
       // The FINAL url, not the requested one: WordPress denies a logged-out actor by
@@ -318,6 +326,7 @@ export async function installSentinel(page: Page, agent: AgentClient): Promise<S
       }
       await page.waitForLoadState('networkidle');
       await scanCurrentBody();
+      return finding ? [finding] : [];
     },
 
     async drain(): Promise<Finding[]> {

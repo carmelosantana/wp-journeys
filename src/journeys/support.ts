@@ -21,7 +21,6 @@ import { isAnonymous, type Actor } from '../actors/roles.ts';
 import type { AgentClient } from '../agent/client.ts';
 import type { Config } from '../config.ts';
 import { messageOf } from '../errors.ts';
-import { redactLoginToken } from '../sentinel/classify.ts';
 import type { Finding } from '../sentinel/phplog.ts';
 import { installSentinel, type Sentinel } from '../sentinel/sentinel.ts';
 import type { JourneyResult, SurfaceAxis } from './index.ts';
@@ -34,30 +33,6 @@ function assertionFinding(text: string): Finding {
   return { kind: 'assertion', text };
 }
 
-/** The page's URL, which is itself unreadable once the page has closed. */
-function currentUrl(page: Page): string {
-  try {
-    return page.url();
-  } catch {
-    return '<the page could not be asked where it was>';
-  }
-}
-
-/**
- * Where a minted login must land.
- *
- * `mintLogin` spends the token and redirects to `admin_url()`, so a session that was really
- * established puts the page inside wp-admin. The login page means the token was refused; the
- * mint URL itself means the request never got that far (a 5xx, say). Both are "no session".
- */
-function landedInAdmin(url: string): boolean {
-  try {
-    return new URL(url, 'http://wp-journeys.invalid/').pathname.includes('/wp-admin/');
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Authenticate the actor.
  *
@@ -67,11 +42,19 @@ function landedInAdmin(url: string): boolean {
  * The minted URL is visited THROUGH the sentinel, so a broken login is a finding here rather
  * than an unexplained failure three steps later.
  *
- * The landing is then checked, because `sentinel.visit` RECORDS a bad landing and returns
- * normally — it does not throw (R50). Without this check the body would run as an ANONYMOUS
- * visitor under the named actor's label: today that is a false RESULT rather than a false
- * green, but for a denial journey an unauthenticated body satisfies an expected denial for
- * entirely the wrong reason.
+ * The navigation's VERDICT is then checked, because `sentinel.visit` RECORDS a bad login and
+ * returns normally — it does not throw (R50). Without this check the body would run as an
+ * ANONYMOUS visitor under the named actor's label: today that is a false RESULT rather than a
+ * false green, but for a denial journey an unauthenticated body satisfies an expected denial
+ * for entirely the wrong reason.
+ *
+ * The verdict is the test, NOT where the page came to rest (R52). Both ways a mint fails show
+ * up as a finding on that navigation — the bounce to wp-login.php through `classifyNavigation`'s
+ * login branch, and a 5xx on the mint itself through its status branch. Asserting the landing
+ * was inside `/wp-admin/` instead would fail a session that is perfectly real: WooCommerce's
+ * `wc_prevent_admin_access` redirects a subscriber to My Account, and hiding the dashboard from
+ * non-admins is a common pattern. That is a false red precisely on the low-privilege actors
+ * whose denials this suite exists to assert.
  */
 async function authenticate(
   page: Page, sentinel: Sentinel, agent: AgentClient, actor: Actor,
@@ -79,12 +62,12 @@ async function authenticate(
   try {
     const { userId } = await agent.ensureActor(actor);
     const { url } = await agent.mintLogin(userId);
-    await sentinel.visit(page, url);
-    const landed = currentUrl(page);
-    if (!landedInAdmin(landed)) {
+    const verdict = await sentinel.visit(page, url);
+    if (verdict.length > 0) {
       throw new Error(
-        // Redacted: the landing may still BE the token URL (R51).
-        `the minted login landed on ${redactLoginToken(landed)} instead of wp-admin — no session was established`,
+        // The verdict's own text, which `classifyNavigation` already redacted (R51) — the
+        // landing may still BE the token URL.
+        `no session was established: ${verdict.map((finding) => finding.text).join('; ')}`,
       );
     }
   } catch (error) {
