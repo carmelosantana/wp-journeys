@@ -149,6 +149,8 @@ export function createMcpServer(deps: McpDeps) {
       const held = await browser;
       if (held.isConnected()) return held;
       browser = null;
+      // Best effort (R95f): whatever is left of its process should not outlive the server.
+      held.close().catch(() => {});
     }
     const launching: Promise<Browser> = deps.launchBrowser().then(
       (fresh) => {

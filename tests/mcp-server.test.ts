@@ -473,7 +473,22 @@ describe('login_as (R84, R85, R87)', () => {
     await call(server, 'login_as', { actor: 'anonymous' });
 
     expect(h.launches()).toBe(2);
+    // R95f: the dropped browser is closed, best effort, so its process is not left behind.
+    expect(h.browser.browserClosed).toBe(1);
     await server.shutdown();
+  });
+
+  it('drops a disconnected browser even when closing it fails (R95f)', async () => {
+    const h = harness();
+    const server = createMcpServer(h.deps);
+    await call(server, 'login_as', { actor: 'anonymous' });
+    (h.browser as unknown as { connected: boolean }).connected = false;
+    h.browser.close = async () => { throw new Error('already gone'); };
+
+    const { isError } = await call(server, 'login_as', { actor: 'anonymous' });
+
+    expect(isError).toBe(false);
+    expect(h.launches()).toBe(2);
   });
 
   it('refuses a session whose sentinel could not be installed — no unwatched page', async () => {
