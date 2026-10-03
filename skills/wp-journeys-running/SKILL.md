@@ -44,7 +44,7 @@ description: Use when end-to-end testing a WordPress plugin as six user roles wi
 |---|---|
 | `ok` | Ran, and nothing was observed. |
 | `FAIL(n)` | `n` findings are listed under the row as `- [kind] text`. |
-| `skip` | Its subject is absent, so it **asserted nothing**. The reason is printed. Never report this row as a pass. |
+| `skip` | Its subject is absent, so it **asserted nothing**. The reason is printed. |
 | `· note` | A condition the row's outcome rests on. It never changes the outcome. |
 
 In the header, `coverage admin: X of Y` means X of the Y journeys aimed at that half actually ran; the gap is skips. Finding kinds and how to chase them: [reading run output](references/run-output.md).
