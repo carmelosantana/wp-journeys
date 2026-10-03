@@ -15,7 +15,7 @@ description: Use when end-to-end testing a WordPress plugin as six user roles wi
 |---|---|
 | Run the suite | `wpj run --plugin <slug>` |
 | Serve the MCP tools over stdio | `wpj mcp` (no arguments) |
-| Link these skills into `~/.claude/skills` | `wpj skills install` |
+| Link these skills into `~/.claude/skills` (skip if a plugin already provides them; both copies would be listed) | `wpj skills install` |
 | Fetch the browser, once | `pnpm --dir /path/to/wp-journeys browser` (the clone's pinned Playwright; never `npx playwright`, which bypasses the lockfile) |
 
 `wpj` means `node bin/wpj.js` run from a clone of wp-journeys on Node 22.18+ (after `pnpm install` and `pnpm browser`). It is not distributed on npm.
