@@ -1,6 +1,6 @@
 ---
 name: wp-journeys-authoring
-description: Use when writing or editing a wp-journeys.json manifest for a WordPress plugin, adding a settings round-trip (write in wp-admin, read back on the frontend), expressing that an actor must be denied a screen, declaring a deliberately deprecated shortcode, gating journeys on the plugin being live, reaching for a TypeScript escape-hatch journey module, or judging whether a green wp-journeys result actually proved anything (false greens, skips, lost signals, expected denials).
+description: Use when writing or editing wp-journeys.json, the manifest that adds a WordPress plugin's own end-to-end journeys to the wp-journeys runner, adding a settings round-trip (write in wp-admin, read back on the frontend), expressing that an actor must be denied a screen, declaring a deliberately deprecated shortcode, gating journeys on the plugin being live, reaching for a TypeScript escape-hatch journey module, or judging whether a green wp-journeys result actually proved anything (false greens, skips, lost signals, expected denials).
 ---
 
 # Authoring wp-journeys
