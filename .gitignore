@@ -3,3 +3,6 @@ test-results/
 playwright-report/
 .env
 .superpowers/
+
+# internal planning docs stay local (contain personal paths/names)
+docs/superpowers/
